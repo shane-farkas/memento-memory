@@ -102,14 +102,29 @@ class RetrievalEngine:
 
         # Step 6: Blend with verbatim results if available
         verbatim_text = ""
-        if self.verbatim and (not selected or self._is_simple_recall(query)):
-            verbatim_results = self.verbatim.search(query, top_k=5)
+        if self.verbatim:
+            verbatim_results = self.verbatim.search(query, top_k=10)
             if verbatim_results:
+                # Group by conversation and expand: if a single turn matched,
+                # pull in the full session so the LLM has surrounding context.
+                seen_convs: dict[str, list] = {}
+                for r in verbatim_results:
+                    cid = r.conversation_id
+                    if cid and cid not in seen_convs:
+                        session_chunks = self.verbatim.get_by_conversation(cid)
+                        seen_convs[cid] = session_chunks
+                    elif not cid and r.chunk_id not in seen_convs:
+                        seen_convs[r.chunk_id] = [r]
+
                 verbatim_lines = ["## Related Conversations"]
-                for r in verbatim_results[:3]:
-                    snippet = r.text[:200]
-                    verbatim_lines.append(f"- {snippet}")
-                verbatim_text = "\n".join(verbatim_lines)
+                for cid, chunks in list(seen_convs.items())[:5]:
+                    ts = chunks[0].timestamp if chunks else ""
+                    ts_label = f" (recorded: {ts})" if ts else ""
+                    full_text = "\n".join(c.text for c in chunks)
+                    verbatim_lines.append(
+                        f"### Conversation{ts_label}\n{full_text}"
+                    )
+                verbatim_text = "\n\n".join(verbatim_lines)
 
         # Step 7: Serialize
         text = self._serialize(selected, query_entities, verbatim_text)

@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(wc -l /c/Users/shane/memento-public/memento/src/memento/*.py)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:datasets-server.huggingface.co)",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(python -c \"from memento.memory_store import MemoryStore; print\\('Import OK'\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c ':*)",
+      "Bash(pip show:*)",
+      "Bash(python -c \"import memento; print\\(memento.__file__\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(where python:*)",
+      "Bash(\"C:\\\\Users\\\\shane\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\" -c \"import memento; print\\('OK:', memento.__file__\\)\")",
+      "Bash('C:\\\\Users\\\\shane\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe' -c ':*)",
+      "Bash('C:\\\\Users\\\\shane\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe' c:/Users/shane/memento-public/memento/benchmarks/longmemeval/run_benchmark.py --help)",
+      "Bash(\"C:\\\\Users\\\\shane\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\" -m pytest tests/test_memory_store.py -x -q)",
+      "Bash(\"C:\\\\Users\\\\shane\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\" -m pytest tests/ -x -q)"
+    ]
+  }
+}

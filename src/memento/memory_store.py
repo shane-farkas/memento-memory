@@ -159,11 +159,17 @@ class MemoryStore:
         turn_number: int = 0,
         source_type: str = "conversation",
         authority: float = 0.9,
+        timestamp: str | None = None,
     ) -> IngestResult:
         """Process raw text and update the knowledge graph.
 
         Runs the full pipeline: verbatim storage, entity extraction,
         entity resolution, conflict detection, and graph writes.
+
+        Args:
+            timestamp: Optional ISO-8601 timestamp for historical ingestion.
+                       When set, the source reference and property as_of times
+                       use this value instead of the current wall-clock time.
         """
         conversation_id = conversation_id or _new_id()
         source_ref = SourceRef(
@@ -172,6 +178,8 @@ class MemoryStore:
             verbatim=text,
             authority=authority,
         )
+        if timestamp:
+            source_ref.timestamp = timestamp
 
         # 1. Store verbatim text
         chunk_id = self.verbatim.store(
@@ -179,6 +187,7 @@ class MemoryStore:
             conversation_id=conversation_id,
             turn_number=turn_number,
             source_type=source_type,
+            timestamp=timestamp,
         )
 
         # 2. Extract entities
@@ -210,6 +219,7 @@ class MemoryStore:
             entity_map[ee.name] = entity
 
             # Set properties with conflict detection
+            prop_as_of = timestamp  # None falls back to _now() in set_property
             for key, value in ee.properties.items():
                 conflict_result = self._conflict_detector.check(
                     entity.id, key, value, new_authority=authority
@@ -219,12 +229,14 @@ class MemoryStore:
                     ConflictType.UPDATE,
                 ):
                     self.graph.set_property(
-                        entity.id, key, value, source_ref=source_ref
+                        entity.id, key, value,
+                        as_of=prop_as_of, source_ref=source_ref,
                     )
                 elif conflict_result.conflict_type == ConflictType.CONTRADICTION:
                     # Store the new value but it's flagged
                     self.graph.set_property(
-                        entity.id, key, value, source_ref=source_ref
+                        entity.id, key, value,
+                        as_of=prop_as_of, source_ref=source_ref,
                     )
                 elif conflict_result.conflict_type == ConflictType.HISTORICAL:
                     # Store as historical
