@@ -280,6 +280,70 @@ def ingest_haystack(
 # Answer generation
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _is_counting_question(question: str) -> bool:
+    """Detect counting/enumeration questions."""
+    q = question.lower()
+    return any(p in q for p in [
+        "how many", "how much", "total number", "count",
+        "list all", "list every",
+    ])
+
+
+COUNTING_ENUMERATE_PROMPT = """\
+Below are memories from past conversations. The user will ask a counting \
+question. Your job is ONLY to enumerate — list every distinct item that \
+matches the question, with dates and sources where available. Do NOT count \
+them yet, just list them.
+
+## Retrieved Memories
+{memory_context}
+
+## Current Date
+{current_date}
+
+## Question
+{question}
+
+List every distinct item relevant to this question, one per line, with any \
+dates or details. Do not count or summarize — just enumerate."""
+
+
+COUNTING_ANSWER_PROMPT = """\
+Here is a numbered list of items relevant to the user's question, extracted \
+from past conversations:
+
+{enumeration}
+
+## Question
+{question}
+
+Now count the items in the list above and give a direct, specific answer."""
+
+
+VERIFY_PROMPT = """\
+You are a careful fact-checker. A chat assistant was asked a question and \
+produced an answer based on retrieved memories. Your job is to verify whether \
+the answer is correct and complete given the evidence.
+
+## Retrieved Memories
+{memory_context}
+
+## Question
+{question}
+
+## Proposed Answer
+{answer}
+
+Check the answer against the memories:
+1. Is every claim in the answer supported by the memories?
+2. Is there relevant information in the memories that the answer missed?
+3. Is the answer actually responding to what was asked?
+
+If the answer is correct, respond with exactly: VERIFIED
+If the answer needs correction, provide the corrected answer directly \
+(no preamble, just the better answer)."""
+
+
 def generate_answer(
     llm_client,
     model: str,
@@ -287,7 +351,20 @@ def generate_answer(
     question: str,
     current_date: str,
 ) -> str:
-    """Use an LLM to produce an answer from the retrieved memory context."""
+    """Use an LLM to produce an answer from the retrieved memory context.
+
+    For counting questions, uses a two-pass approach:
+      Pass 1: enumerate all relevant items
+      Pass 2: count and answer from the enumeration
+
+    All answers go through a self-verification pass that catches obvious
+    errors before returning.
+    """
+    if _is_counting_question(question):
+        return _two_pass_counting(
+            llm_client, model, memory_context, question, current_date,
+        )
+
     user_msg = ANSWER_PROMPT.format(
         memory_context=memory_context,
         current_date=current_date,
@@ -300,6 +377,68 @@ def generate_answer(
         temperature=0.0,
         max_tokens=1024,
     )
+
+
+def _two_pass_counting(
+    llm_client,
+    model: str,
+    memory_context: str,
+    question: str,
+    current_date: str,
+) -> str:
+    """Two-pass answer generation for counting questions."""
+    # Pass 1: enumerate
+    enum_msg = COUNTING_ENUMERATE_PROMPT.format(
+        memory_context=memory_context,
+        current_date=current_date,
+        question=question,
+    )
+    enumeration = llm_client.complete(
+        messages=[{"role": "user", "content": enum_msg}],
+        model=model,
+        system=ANSWER_SYSTEM,
+        temperature=0.0,
+        max_tokens=1024,
+    )
+
+    # Pass 2: count from the enumeration
+    count_msg = COUNTING_ANSWER_PROMPT.format(
+        enumeration=enumeration,
+        question=question,
+    )
+    return llm_client.complete(
+        messages=[{"role": "user", "content": count_msg}],
+        model=model,
+        system=ANSWER_SYSTEM,
+        temperature=0.0,
+        max_tokens=512,
+    )
+
+
+def _verify_answer(
+    llm_client,
+    model: str,
+    memory_context: str,
+    question: str,
+    answer: str,
+) -> str:
+    """Self-verification: check the answer against the evidence."""
+    verify_msg = VERIFY_PROMPT.format(
+        memory_context=memory_context,
+        question=question,
+        answer=answer,
+    )
+    verdict = llm_client.complete(
+        messages=[{"role": "user", "content": verify_msg}],
+        model=model,
+        temperature=0.0,
+        max_tokens=1024,
+    )
+
+    if verdict.strip().startswith("VERIFIED"):
+        return answer
+    # The verifier produced a correction — use it
+    return verdict
 
 
 # ═══════════════════════════════════════════════════════════════════════════

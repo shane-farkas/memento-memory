@@ -81,6 +81,11 @@ class RetrievalEngine:
         """Execute the full retrieval pipeline."""
         budget = token_budget or self.default_token_budget
 
+        # Step 0: Adaptive retrieval — widen search for enumeration queries
+        retrieval_profile = self._classify_query(query)
+        verbatim_top_k = retrieval_profile["verbatim_top_k"]
+        max_conversations = retrieval_profile["max_conversations"]
+
         # Step 1: Identify entities in the query
         query_entities = self._identify_entities(query)
 
@@ -103,7 +108,7 @@ class RetrievalEngine:
         # Step 6: Blend with verbatim results if available
         verbatim_text = ""
         if self.verbatim:
-            verbatim_results = self.verbatim.search(query, top_k=10)
+            verbatim_results = self.verbatim.search(query, top_k=verbatim_top_k)
             if verbatim_results:
                 # Group by conversation and expand: if a single turn matched,
                 # pull in the full session so the LLM has surrounding context.
@@ -117,7 +122,7 @@ class RetrievalEngine:
                         seen_convs[r.chunk_id] = [r]
 
                 verbatim_lines = ["## Related Conversations"]
-                for cid, chunks in list(seen_convs.items())[:5]:
+                for cid, chunks in list(seen_convs.items())[:max_conversations]:
                     ts = chunks[0].timestamp if chunks else ""
                     ts_label = f" (recorded: {ts})" if ts else ""
                     full_text = "\n".join(c.text for c in chunks)
@@ -440,3 +445,23 @@ class RetrievalEngine:
         simple_indicators = ["what did", "when did", "what was", "did i", "have i"]
         query_lower = query.lower()
         return any(ind in query_lower for ind in simple_indicators)
+
+    def _classify_query(self, query: str) -> dict:
+        """Classify a query to select retrieval parameters.
+
+        Wide-recall queries (counting, listing, multi-hop) get more
+        verbatim results and conversations. Narrow queries (single fact,
+        simple recall) stay focused to avoid context dilution.
+        """
+        q = query.lower()
+
+        wide_patterns = [
+            "how many", "how much", "list all", "list every",
+            "all the", "everything", "total number",
+            "did i participate", "did i attend", "did i visit",
+        ]
+        is_wide = any(p in q for p in wide_patterns)
+
+        if is_wide:
+            return {"verbatim_top_k": 20, "max_conversations": 10}
+        return {"verbatim_top_k": 10, "max_conversations": 5}
