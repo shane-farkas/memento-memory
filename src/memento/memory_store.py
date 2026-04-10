@@ -234,10 +234,17 @@ class MemoryStore:
                     )
                 elif conflict_result.conflict_type == ConflictType.CONTRADICTION:
                     # Store the new value but it's flagged
-                    self.graph.set_property(
+                    new_prop = self.graph.set_property(
                         entity.id, key, value,
                         as_of=prop_as_of, source_ref=source_ref,
                     )
+                    # Update the conflict record with the new property's ID
+                    if conflict_result.conflict_id and new_prop:
+                        self._db.execute(
+                            "UPDATE conflicts SET value_b_id = ? WHERE id = ?",
+                            (new_prop.id, conflict_result.conflict_id),
+                        )
+                        self._db.conn.commit()
                 elif conflict_result.conflict_type == ConflictType.HISTORICAL:
                     # Store as historical
                     self.graph.set_property(
@@ -295,8 +302,16 @@ class MemoryStore:
         return self._retrieval.recall(query, context, token_budget, as_of)
 
     def recall_entity(self, entity_id: str, depth: int = 2) -> Entity | None:
-        """Get everything known about a specific entity."""
-        return self.graph.get_entity(entity_id)
+        """Get everything known about a specific entity.
+
+        When depth > 0, also populates the entity's relationships and
+        fetches neighboring entities up to *depth* hops away.
+        """
+        entity = self.graph.get_entity(entity_id)
+        if entity and depth > 0:
+            # Attach neighbors up to the requested hop depth
+            entity._neighbors = self.graph.get_neighbors(entity_id, max_hops=depth)
+        return entity
 
     # ── Direct Manipulation ──────────────────────────────────────
 
@@ -316,7 +331,7 @@ class MemoryStore:
         )
 
     def forget(self, entity_id: str | None = None, relationship_id: str | None = None) -> None:
-        """Remove a memory (soft delete — archives the entity)."""
+        """Remove a memory (soft delete — archives the entity or ends the relationship)."""
         if entity_id:
             self._db.execute(
                 "UPDATE entities SET archived = 1 WHERE id = ?", (entity_id,)
@@ -324,7 +339,8 @@ class MemoryStore:
             self._db.conn.commit()
         if relationship_id:
             self._db.execute(
-                "DELETE FROM relationships WHERE id = ?", (relationship_id,)
+                "UPDATE relationships SET valid_to = ? WHERE id = ?",
+                (_now(), relationship_id),
             )
             self._db.conn.commit()
 

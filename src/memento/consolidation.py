@@ -85,12 +85,16 @@ class ConsolidationEngine:
     # ── Confidence Decay ─────────────────────────────────────────
 
     def decay_confidence(self) -> int:
-        """Apply multiplicative confidence decay to all active properties.
+        """Apply confidence decay to all active properties.
 
-        Uses the formula from the architecture doc:
-          time_decay = base * 0.5^(age / half_life)
+        Computes decay from recorded_at directly against a base of 1.0,
+        avoiding compounding errors across multiple consolidation passes:
+          time_decay = 0.5^(age / half_life)
           confirmation_multiplier = 1.0 + min(confirmation_count * 0.1, 0.5)
           decayed = time_decay * confirmation_multiplier
+
+        The result is clamped to never exceed the property's current
+        confidence (confirmations can only slow decay, not reverse it).
         """
         now = datetime.now(timezone.utc)
         rows = self.db.fetchall(
@@ -109,12 +113,15 @@ class ConsolidationEngine:
                 row["key"], self.half_lives["default"]
             )
 
-            base = row["confidence"]
-            time_decay = base * (0.5 ** (age_days / half_life))
+            # Compute decay from a fixed base of 1.0, not the current
+            # confidence. This makes the result idempotent — running
+            # decay N times produces the same value as running it once.
+            time_decay = 0.5 ** (age_days / half_life)
 
-            # Count confirmations (how many times this property was set to the same value)
-            # For simplicity, use a baseline of 0 confirmations (future: track explicitly)
-            confirmation_count = 0
+            # Count confirmations for this property value
+            confirmation_count = self._count_confirmations(
+                row["id"], row["key"]
+            )
             confirmation_multiplier = 1.0 + min(confirmation_count * 0.1, 0.5)
 
             decayed = min(time_decay * confirmation_multiplier, 1.0)
@@ -130,6 +137,21 @@ class ConsolidationEngine:
             self.db.conn.commit()
         logger.info("Decayed confidence on %d properties", updated)
         return updated
+
+    def _count_confirmations(self, property_id: str, key: str) -> int:
+        """Count how many times a property was confirmed via _boost_confidence.
+
+        Approximated by counting how many superseded properties on the same
+        entity+key share the same value (i.e., were set and then re-confirmed).
+        """
+        row = self.db.fetchone(
+            """SELECT COUNT(*) as cnt FROM properties p1
+               JOIN properties p2 ON p1.entity_id = p2.entity_id
+                 AND p1.key = p2.key AND p1.value_json = p2.value_json
+               WHERE p2.id = ? AND p1.id != p2.id AND p1.key = ?""",
+            (property_id, key),
+        )
+        return row["cnt"] if row else 0
 
     # ── Redundancy Merging ───────────────────────────────────────
 
