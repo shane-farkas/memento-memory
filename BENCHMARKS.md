@@ -2,7 +2,7 @@
 
 ## LongMemEval
 
-We evaluate Memento on [LongMemEval](https://github.com/xiaowu0162/longmemeval) (Wu et al., 2024), a benchmark designed to test chat assistants on long-term interactive memory. The benchmark presents 500 questions that require recalling and reasoning over information scattered across multiple past conversation sessions.
+I have been evaluating Memento on [LongMemEval](https://github.com/xiaowu0162/longmemeval), a benchmark designed to test chat assistants on long-term interactive memory. The benchmark presents 500 questions that require recalling and reasoning over information scattered across multiple past conversation sessions.
 
 **Paper:** "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory" — [arXiv](https://arxiv.org/abs/2410.10813)
 
@@ -52,7 +52,7 @@ Each question is processed through this pipeline:
 
 1. **Ingest** — All haystack sessions for a question are ingested into a fresh in-memory MemoryStore. Each session runs through Memento's full pipeline: entity extraction, entity resolution, relationship extraction, temporal tagging, and verbatim storage. Session dates are preserved as `[Conversation date: ...]` headers.
 
-2. **Recall** — `store.recall(question, token_budget=4000, as_of=question_date)` retrieves relevant context. This uses Memento's compositional retrieval: keyword search (FTS5), semantic search (embeddings), and knowledge graph traversal up to 3 hops. The `as_of` parameter ensures temporal correctness — the system only sees information available at the question's date.
+2. **Recall** — `store.recall(question, token_budget=4000, as_of=question_date)` retrieves relevant context. This uses Memento's compositional retrieval: keyword search (FTS5), semantic search (embeddings), and knowledge graph traversal up to 3 hops. The `as_of` parameter ensures temporal correctness so the system only sees information available at the question's date.
 
 3. **Answer** — An LLM generates an answer from the retrieved context. The prompt instructs the model to use conversation dates for temporal reasoning, prefer the most recent value for updated facts, apply known preferences concretely, and enumerate before counting. Temperature is set to 0.0 for reproducibility.
 
@@ -72,7 +72,7 @@ The benchmark uses an in-memory SQLite database with these settings:
 - **Model:** Configurable via `--answer-model` (defaults to provider's default chat model)
 - **Temperature:** 0.0
 - **Two-pass counting:** Questions detected as counting/enumeration ("how many X") use a two-pass approach — first enumerate all items, then count from the enumeration
-- **Self-verification:** Not currently active in the main path (available but not invoked by default)
+- **Self-verification:** Not currently active in the main path since it didn't seem to improve the overall accuracy (available but not invoked by default)
 
 ### Reproduction
 
@@ -82,9 +82,13 @@ The benchmark uses an in-memory SQLite database with these settings:
 # Install Memento with your preferred LLM provider
 pip install memento-memory[anthropic]   # or [openai] or [gemini]
 
-# Set API keys
-export ANTHROPIC_API_KEY=your-key       # For Memento extraction + answer generation
-export OPENAI_API_KEY=your-key          # Required for GPT-4o judge in evaluation step
+# Set your provider's API key (pick one)
+export ANTHROPIC_API_KEY=your-key       # For Anthropic
+export OPENAI_API_KEY=your-key          # For OpenAI
+export GOOGLE_API_KEY=your-key          # For Gemini
+
+# Also needed for the evaluation step (GPT-4o judge)
+export OPENAI_API_KEY=your-key
 ```
 
 #### Step 1: Download the Dataset
