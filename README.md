@@ -1,12 +1,12 @@
 # Memento
 
-**Any model, same memory.** A temporal knowledge graph that gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
+**Any model, same memory.** A bitemporal knowledge graph that gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
 
 Most AI memory systems dump text into a vector store and retrieve by similarity. Memento builds a **knowledge graph** — resolving entities, detecting contradictions, tracking time, and composing answers from structured relationships rather than raw chunks.
 
 Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Cline, Windsurf, OpenClaw, Continue.dev) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
 
-**90.8% accuracy on [LongMemEval](BENCHMARKS.md)** (500 questions, GPT-4o judge) — a benchmark for long-term conversational memory covering temporal reasoning, knowledge updates, multi-session recall, and preference tracking.
+**90.8% overall accuracy, 92.2% task average on [LongMemEval](BENCHMARKS.md)** (500 questions, GPT-4o judge) — a benchmark for long-term conversational memory covering temporal reasoning, knowledge updates, multi-session recall, and preference tracking.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ Add to your MCP client config (e.g., Claude Desktop `claude_desktop_config.json`
 }
 ```
 
-That's it. The agent now has persistent memory — it calls `memory_ingest` to store facts and `memory_recall` to retrieve them. Every MCP client on the same machine shares the same knowledge graph.
+That's it. The agent now has persistent memory and calls `memory_ingest` to store facts and `memory_recall` to retrieve them. Every MCP client on the same machine shares the same knowledge graph.
 
 ### Python API
 
@@ -41,17 +41,17 @@ from memento import MemoryStore
 store = MemoryStore()
 
 # Ingest — extracts entities, resolves against the graph, detects contradictions
-store.ingest("John Smith is VP of Sales at Acme Corp.")
-store.ingest("Acme Corp is acquiring Beta Inc.")
+store.ingest("John Smith is VP of Sales at Alpha Corp.")
+store.ingest("Alpha Corp is acquiring Beta Inc.")
 
 # Recall — graph traversal + ranking + context budgeting
 memory = store.recall("What should I know about John?")
 print(memory.text)
 # ## John Smith (person)
 # - title: VP of Sales
-# - → [works_at] Acme Corp
+# - → [works_at] Alpha Corp
 #
-# ## Acme Corp (organization)
+# ## Alpha Corp (organization)
 # - → [acquiring] Beta Inc
 
 # Point-in-time queries
@@ -110,7 +110,7 @@ Temporal Knowledge Graph (SQLite)
   └── Privacy Layer (export, audit, hard delete)
 ```
 
-- **Entity resolution** — "John," "John Smith," and "the Acme guy" become one node. Tiered matching: exact/fuzzy/phonetic (cheap) before embedding similarity and LLM tiebreaker (expensive).
+- **Entity resolution** — "John," "John Smith," and "the Alpha guy" become one node. Tiered matching: exact/fuzzy/phonetic (cheap) before embedding similarity and LLM tiebreaker (expensive).
 - **Contradiction detection** — flags when new facts conflict with existing ones
 - **Bitemporal model** — every fact tracks when it was true (valid time) and when the system learned it (transaction time)
 - **Immutable history** — facts are never deleted, only superseded. Full audit trail.
