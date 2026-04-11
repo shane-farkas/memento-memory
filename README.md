@@ -2,7 +2,7 @@
 
 **Any model, same memory.** A bitemporal knowledge graph that gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
 
-Most AI memory systems dump text into a vector store and retrieve by similarity. Memento builds a **knowledge graph** — resolving entities, detecting contradictions, tracking time, and composing answers from structured relationships rather than raw chunks.
+Most AI memory systems dump text into a vector store and retrieve by similarity. Memento builds a **knowledge graph** that resolves entities, detects contradictions, tracks time, and composes answers from structured relationships rather than raw chunks.
 
 Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Cline, Windsurf, OpenClaw, Continue.dev) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
 
