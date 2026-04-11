@@ -38,6 +38,25 @@ Add to your MCP client config (e.g., Claude Desktop `claude_desktop_config.json`
 
 That's it. The agent now has persistent memory and calls `memory_ingest` to store facts and `memory_recall` to retrieve them. Every MCP client on the same machine shares the same knowledge graph.
 
+### Compatible Clients
+
+Any MCP-compatible client works with Memento. Add the config block above to:
+
+| Client | Config location |
+|---|---|
+| **Claude Desktop** | `claude_desktop_config.json` |
+| **Claude Code** | `claude_code_config.json` or `--mcp-config` flag |
+| **Cursor** | Settings or `~/.cursor/mcp.json` |
+| **Cline** | MCP server settings |
+| **Windsurf** | MCP server settings |
+| **OpenClaw** | MCP server settings |
+| **Codex CLI** | `.codex/config.yaml` MCP servers |
+| **Gemini CLI** | `gemini mcp add memento -- memento-mcp` |
+| **OpenCode** | `.opencode/config.json` MCP servers |
+| **Goose** | `~/.config/goose/config.yaml` MCP servers |
+| **Kilo Code** | MCP server settings |
+| **Continue.dev** | MCP server settings |
+
 ### Python API
 
 ```python
