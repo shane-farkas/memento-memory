@@ -577,9 +577,9 @@ def run_benchmark(
     }
     expected_key = expected_keys.get(provider)
     if expected_key and not os.environ.get(expected_key):
-        print(f"\n  WARNING: WARNING: Provider is {provider} but {expected_key} is NOT set!")
+        print(f"\n  ⚠ WARNING: Provider is {provider} but {expected_key} is NOT set!")
     if provider == "openai" and os.environ.get("ANTHROPIC_API_KEY"):
-        print("\n  WARNING: WARNING: ANTHROPIC_API_KEY is set but provider is openai.")
+        print("\n  ⚠ WARNING: ANTHROPIC_API_KEY is set but provider is openai.")
         print("  Set MEMENTO_LLM_PROVIDER=anthropic to use Claude instead.")
     print()
 
