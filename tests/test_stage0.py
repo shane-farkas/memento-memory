@@ -22,7 +22,7 @@ def test_import_all_modules():
 def test_default_config():
     config = MementoConfig()
     assert config.embedding.dimension == 384
-    assert config.embedding.provider == "sentence-transformers"
+    assert config.embedding.provider == "auto"
     assert config.llm.extraction_model == ""  # Auto-set from provider at runtime
     assert config.resolution.high_threshold == 0.85
     assert config.resolution.low_threshold == 0.40
@@ -83,7 +83,7 @@ def test_embedding_config_defaults():
     config = EmbeddingConfig()
     assert config.dimension == 384
     assert config.model == "all-MiniLM-L6-v2"
-    assert config.provider == "sentence-transformers"
+    assert config.provider == "auto"
 
 
 def test_embedder_protocol():
