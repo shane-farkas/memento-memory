@@ -153,7 +153,7 @@ Bitemporal Knowledge Graph (SQLite)
 
 ## Benchmarks
 
-**90.8% overall accuracy on LongMemEval** (500 questions across 6 categories):
+**90.8% overall accuracy on LongMemEval** with Claude Sonnet 4.6 (500 questions):
 
 | Category | Accuracy |
 |---|--:|
@@ -164,6 +164,22 @@ Bitemporal Knowledge Graph (SQLite)
 | Knowledge update | 88.5% |
 | Multi-session | 86.5% |
 | **Task-averaged** | **92.2%** |
+
+### Any Model, Same Memory
+
+Memento is model-agnostic. The same knowledge graph works across providers — only the answer-generation LLM changes. Results on a 50-question stratified sample:
+
+| Model | Provider | Overall | Task-avg |
+|---|---|--:|--:|
+| **Claude Sonnet 4.6** ★ | Anthropic | **90.8%** | **92.2%** |
+| Qwen 3 235B A22B | Together (Alibaba) | 94.0% | 94.2% |
+| MiniMax M2.7 | Together (MiniMax) | 94.0% | 93.8% |
+| Llama 3.3 70B | Together (Meta) | 88.0% | 87.5% |
+| Gemma 4 31B | Together (Google) | 86.0% | 85.8% |
+| DeepSeek V3.1 | Together (DeepSeek) | 84.0% | 83.3% |
+| Kimi K2.5 | Together (Moonshot) | 70.0% | 70.0% |
+
+★ Claude Sonnet result is from the full 500-question run. Open-source models were evaluated on a 50-question stratified sample covering all six categories. Same Memento graph, same retrieval pipeline, same GPT-4o judge — only the answer model changes.
 
 Full methodology and reproduction steps: [BENCHMARKS.md](BENCHMARKS.md)
 
