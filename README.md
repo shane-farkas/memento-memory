@@ -194,6 +194,8 @@ memento-web
 
 Open http://localhost:8766. The viewer reads from the same `~/.memento/memento.db` that `memento-mcp` writes to — see your agent's memories update in real time.
 
+![Memento graph viewer](docs/graph-viewer.png)
+
 - **Entity list** — search and filter by type (person, organization, project, etc.)
 - **Detail view** — properties, relationships, version history, confidence scores
 - **Graph view** — interactive force-directed visualization with d3.js (zoom, drag, click to navigate)
