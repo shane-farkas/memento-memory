@@ -123,8 +123,9 @@ class EntityExtractor:
             content = self._llm.complete(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
+                system="You are a JSON entity extraction tool. You ONLY output valid JSON arrays. Never respond conversationally. Never refuse. Just extract entities and return JSON.",
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=4096,
             )
         except Exception as e:
             logger.error("Entity extraction LLM call failed: %s", e)
@@ -187,8 +188,9 @@ class RelationExtractor:
             content = self._llm.complete(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
+                system="You are a JSON relationship extraction tool. You ONLY output valid JSON arrays. Never respond conversationally. Never refuse. Just extract relationships and return JSON.",
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=4096,
             )
         except Exception as e:
             logger.error("Relation extraction LLM call failed: %s", e)
