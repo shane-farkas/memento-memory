@@ -23,18 +23,26 @@ export ANTHROPIC_API_KEY=your-key
 memento-mcp
 ```
 
-Add to your MCP client config (e.g., Claude Desktop `claude_desktop_config.json`):
+Set your API key as an environment variable in your shell profile (e.g. `~/.zshrc`, `~/.bashrc`, or Windows system environment variables) rather than hardcoding it in config files:
+
+```bash
+export ANTHROPIC_API_KEY=your-key
+```
+
+Then add to your MCP client config (e.g., Claude Desktop `claude_desktop_config.json`), referencing the variable with `${...}` expansion:
 
 ```json
 {
   "mcpServers": {
     "memento": {
       "command": "memento-mcp",
-      "env": { "ANTHROPIC_API_KEY": "your-key" }
+      "env": { "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}" }
     }
   }
 }
 ```
+
+This keeps your key out of config files that may be synced, committed to dotfile repos, or shared in screenshots. Variable expansion is supported by Claude Desktop, Cursor, Cline, Windsurf, and Continue.dev; for clients that don't expand `${VAR}`, launch the client from a shell where the variable is already set.
 
 That's it. The agent now has persistent memory and calls `memory_ingest` to store facts and `memory_recall` to retrieve them. Every MCP client on the same machine shares the same knowledge graph.
 
