@@ -46,6 +46,8 @@ This keeps your key out of config files that may be synced, committed to dotfile
 
 That's it. The agent now has persistent memory and calls `memory_ingest` to store facts and `memory_recall` to retrieve them. Every MCP client on the same machine shares the same knowledge graph.
 
+Memories are stored locally in a SQLite database at `~/.memento/memento.db` (override with `MEMENTO_DB_PATH`). Nothing leaves your machine unless you explicitly configure a cloud LLM provider for entity extraction.
+
 ### Compatible Clients
 
 Any MCP-compatible client works with Memento. Add the config block above to:
