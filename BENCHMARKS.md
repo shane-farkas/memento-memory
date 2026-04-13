@@ -165,6 +165,14 @@ Single category:
 python run_benchmark.py run --variant oracle --output results_temporal.jsonl --category temporal-reasoning
 ```
 
+Parallel execution (big speedup on the `s` and `m` variants, where ingestion dominates):
+
+```bash
+python run_benchmark.py run --variant s --output results_s.jsonl --workers 10
+```
+
+`--workers N` runs N questions in parallel via a thread pool. Each worker creates its own in-memory SQLite store, so there's no shared graph state — only the JSONL write is serialized. On the oracle variant this gives roughly linear speedup up to 5-10 workers. On the `s` and `m` variants (where ingestion is 15-20x more LLM work per question), 10 workers can turn a multi-day sequential run into an overnight one. Start conservative — Anthropic and your answer-model provider both have rate limits. If you see 429 errors, drop the worker count.
+
 The run supports resuming — if interrupted, re-running the same command skips already-completed questions. Use `--no-resume` to start fresh.
 
 #### Step 3: Evaluate

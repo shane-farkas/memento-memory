@@ -38,6 +38,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.request
@@ -519,6 +520,7 @@ def run_benchmark(
     answer_provider: str | None = None,
     answer_base_url: str | None = None,
     answer_api_key: str | None = None,
+    workers: int = 1,
 ) -> None:
     """Run the full benchmark: ingest → recall → answer → save.
 
@@ -613,6 +615,7 @@ def run_benchmark(
         _run_per_question(
             remaining, llm_client, model, out,
             per_turn=per_turn, token_budget=token_budget,
+            workers=workers,
         )
 
     # Summary
@@ -663,6 +666,54 @@ def _run_shared_haystack(
     store.close()
 
 
+_write_lock = threading.Lock()
+
+
+def _process_one_question(
+    entry: dict,
+    llm_client,
+    model: str,
+    out_path: Path,
+    per_turn: bool,
+    token_budget: int,
+) -> tuple[str, str]:
+    """Process a single question in isolation. Safe to run from a worker thread.
+
+    Creates its own MemoryStore (:memory: SQLite per worker), ingests the
+    haystack, retrieves context, and writes the result. Returns (qid, status).
+    """
+    qid = entry["question_id"]
+    sessions = entry["haystack_sessions"]
+    dates = entry["haystack_dates"]
+
+    store = create_memory_store()
+    try:
+        ingest_haystack(store, sessions, dates, per_turn=per_turn, progress=False)
+
+        question = entry["question"]
+        current_date = entry.get("question_date", "")
+        as_of = (
+            f"{current_date}T23:59:59+00:00"
+            if current_date and "T" not in current_date
+            else current_date
+        )
+
+        memory = store.recall(question, token_budget=token_budget, as_of=as_of or None)
+        answer = generate_answer(llm_client, model, memory.text, question, current_date)
+
+        with _write_lock:
+            _append_result(out_path, qid, answer)
+        return qid, "ok"
+    except Exception as e:
+        logger.error("Error on %s: %s", qid, e)
+        traceback.print_exc()
+        with _write_lock:
+            _append_result(out_path, qid, f"Error: {e}")
+        return qid, f"error: {e}"
+    finally:
+        store.close()
+
+
 def _run_per_question(
     questions: list[dict],
     llm_client,
@@ -671,36 +722,46 @@ def _run_per_question(
     *,
     per_turn: bool,
     token_budget: int,
+    workers: int = 1,
 ) -> None:
-    """Each question has its own haystack — build a store per question."""
-    print(f"\n  Processing {len(questions)} questions (per-question stores) ...")
+    """Each question has its own haystack — build a store per question.
 
-    for i, entry in enumerate(questions):
-        qid = entry["question_id"]
-        sessions = entry["haystack_sessions"]
-        dates = entry["haystack_dates"]
+    When workers > 1, questions are processed in parallel via a thread pool.
+    Each worker creates its own in-memory SQLite store so there is no shared
+    graph state. Only the output JSONL write is serialized (via _write_lock).
+    """
+    total = len(questions)
+    print(f"\n  Processing {total} questions (per-question stores, workers={workers}) ...")
 
-        print(f"\n  [{i+1}/{len(questions)}] {qid} ({len(sessions)} sessions)")
+    if workers <= 1:
+        # Sequential path — preserves the original progress output
+        for i, entry in enumerate(questions):
+            qid = entry["question_id"]
+            print(f"\n  [{i+1}/{total}] {qid} ({len(entry['haystack_sessions'])} sessions)")
+            _process_one_question(
+                entry, llm_client, model, out_path, per_turn, token_budget
+            )
+        return
 
-        store = create_memory_store()
-        try:
-            ingest_haystack(store, sessions, dates, per_turn=per_turn, progress=False)
-
-            question = entry["question"]
-            current_date = entry.get("question_date", "")
-            as_of = f"{current_date}T23:59:59+00:00" if current_date and "T" not in current_date else current_date
-
-            memory = store.recall(question, token_budget=token_budget, as_of=as_of or None)
-            answer = generate_answer(llm_client, model, memory.text, question, current_date)
-
-            _append_result(out_path, qid, answer)
-            print(f"    Answer: {answer[:120]}...")
-        except Exception as e:
-            logger.error("Error on %s: %s", qid, e)
-            traceback.print_exc()
-            _append_result(out_path, qid, f"Error: {e}")
-        finally:
-            store.close()
+    # Parallel path
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    completed = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _process_one_question,
+                entry, llm_client, model, out_path, per_turn, token_budget,
+            ): entry["question_id"]
+            for entry in questions
+        }
+        for fut in as_completed(futures):
+            qid = futures[fut]
+            completed += 1
+            try:
+                _, status = fut.result()
+            except Exception as e:
+                status = f"crash: {e}"
+            print(f"  [{completed}/{total}] {qid} — {status}", flush=True)
 
 
 def _answer_questions(
@@ -1006,6 +1067,12 @@ def main() -> None:
         "--answer-api-key", default=None,
         help="API key for answer generation provider",
     )
+    run.add_argument(
+        "--workers", type=int, default=1,
+        help="Number of parallel workers for per-question processing "
+             "(default: 1, sequential). Each worker uses its own in-memory "
+             "SQLite store. Only the per-question path is parallelized.",
+    )
 
     # evaluate -----------------------------------------------------------
     ev = sub.add_parser("evaluate", help="Evaluate results with GPT-4o judge")
@@ -1043,6 +1110,7 @@ def main() -> None:
             answer_provider=args.answer_provider,
             answer_base_url=args.answer_base_url,
             answer_api_key=args.answer_api_key,
+            workers=args.workers,
         )
 
     elif args.command == "evaluate":
