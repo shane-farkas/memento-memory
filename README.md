@@ -59,13 +59,23 @@ Any MCP-compatible client works with Memento. Add the config block above to:
 | **Cursor** | Settings or `~/.cursor/mcp.json` |
 | **Cline** | MCP server settings |
 | **Windsurf** | MCP server settings |
-| **OpenClaw** | MCP server settings |
+| **OpenClaw** | See [OpenClaw setup](#openclaw) below |
 | **Codex CLI** | `.codex/config.yaml` MCP servers |
 | **Gemini CLI** | `gemini mcp add memento -- memento-mcp` |
 | **OpenCode** | `.opencode/config.json` MCP servers |
 | **Goose** | `~/.config/goose/config.yaml` MCP servers |
 | **Kilo Code** | MCP server settings |
 | **Continue.dev** | MCP server settings |
+
+### OpenClaw
+
+```bash
+pip install "memento-memory[anthropic]"  # or [openai] / [gemini]
+openclaw mcp set memento '{"command":"memento-mcp"}'
+openclaw gateway restart
+```
+
+Make sure `ANTHROPIC_API_KEY` (or your chosen provider's key) is available to the OpenClaw process. For a systemd install, add it to `/etc/openclaw/env` and run `sudo systemctl restart openclaw`. For a user-level install, export it in the shell where you run `openclaw`.
 
 ### Python API
 
