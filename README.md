@@ -188,19 +188,24 @@ Vector retrieval handles single-conversation lookups fine but falls apart on mul
 
 ### Any Model, Same Memory
 
-Memento is model-agnostic. The same knowledge graph works across providers — only the answer-generation LLM changes. Results on a 50-question stratified sample:
+Memento is model-agnostic. The same knowledge graph works across providers — only the answer-generation LLM changes. Same Memento graph, same retrieval pipeline, same GPT-4o judge.
+
+**Full 500-question runs:**
 
 | Model | Provider | Overall | Task-avg |
 |---|---|--:|--:|
-| **Claude Sonnet 4.6** ★ | Anthropic | **90.8%** | **92.2%** |
-| Qwen 3 235B A22B | Together (Alibaba) | 94.0% | 94.2% |
+| **Claude Sonnet 4.6** | Anthropic | **90.8%** | **92.2%** |
+| Qwen 3 235B A22B | Together (Alibaba) | 79.6% | 80.1% |
+
+**50-question stratified samples** (for a quick read; small-sample numbers can be noisy — see Qwen's drop from 94.0% on 50 to 79.6% on 500):
+
+| Model | Provider | Overall | Task-avg |
+|---|---|--:|--:|
 | MiniMax M2.7 | Together (MiniMax) | 94.0% | 93.8% |
 | Llama 3.3 70B | Together (Meta) | 88.0% | 87.5% |
 | Gemma 4 31B | Together (Google) | 86.0% | 85.8% |
 | DeepSeek V3.1 | Together (DeepSeek) | 84.0% | 83.3% |
 | Kimi K2.5 | Together (Moonshot) | 70.0% | 70.0% |
-
-★ Claude Sonnet result is from the full 500-question run. Open-source models were evaluated on a 50-question stratified sample covering all six categories. Same Memento graph, same retrieval pipeline, same GPT-4o judge — only the answer model changes.
 
 Full methodology and reproduction steps: [BENCHMARKS.md](BENCHMARKS.md)
 
