@@ -131,7 +131,19 @@ def test_hard_delete(setup):
     assert graph.db.fetchone("SELECT id FROM entities WHERE id = ?", (john.id,)) is None
     assert graph.db.fetchall("SELECT * FROM properties WHERE entity_id = ?", (john.id,)) == []
     assert graph.db.fetchall("SELECT * FROM entity_aliases WHERE entity_id = ?", (john.id,)) == []
-    assert graph.db.fetchall("SELECT * FROM access_log WHERE entity_id = ?", (john.id,)) == []
+
+    # Access log rows are INTENTIONALLY preserved as an audit trail.
+    # See comment in privacy.delete_entity_cascade — wiping them would
+    # destroy the record the function is supposed to produce.
+    assert graph.db.fetchall("SELECT * FROM access_log WHERE entity_id = ?", (john.id,)) != []
+
+    # A deletion_audit_log row should exist for this entity.
+    audit_row = graph.db.fetchone(
+        "SELECT * FROM deletion_audit_log WHERE entity_id = ?", (john.id,)
+    )
+    assert audit_row is not None
+    assert audit_row["entity_name"] == "John Smith"
+    assert audit_row["content_hash"] == receipt.content_hash
 
     # Acme should still exist
     assert graph.get_entity(acme.id) is not None

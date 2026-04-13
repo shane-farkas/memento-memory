@@ -20,12 +20,45 @@ from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from memento.config import MementoConfig
 from memento.memory_store import MemoryStore
 from memento.models import EntityType
 
+# Content Security Policy — forbids inline scripts, permits d3 from CDN.
+# Once d3 is bundled locally we can drop the d3js.org allowance.
+_CSP = (
+    "default-src 'none'; "
+    "script-src 'self' https://d3js.org; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "base-uri 'none'; "
+    "form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = _CSP
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+
 app = FastAPI(title="Memento Knowledge Graph Viewer")
+app.add_middleware(_SecurityHeadersMiddleware)
+# Defeats DNS-rebinding: only accepts loopback Host headers by default.
+# Overridden at startup in main() when --unsafe-network is explicitly passed.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"],
+)
 
 _store: MemoryStore | None = None
 
@@ -156,6 +189,7 @@ def api_graph(
 ):
     """Return nodes and links for d3 force graph."""
     store = _get_store()
+    hops = max(1, min(hops, 4))  # Clamp to prevent recursive CTE explosion
 
     if center:
         # Subgraph around a specific entity
@@ -285,7 +319,40 @@ def main():
     parser = argparse.ArgumentParser(description="Memento Knowledge Graph Viewer")
     parser.add_argument("--port", type=int, default=8766, help="Port (default: 8766)")
     parser.add_argument("--host", default="127.0.0.1", help="Host (default: 127.0.0.1)")
+    parser.add_argument(
+        "--unsafe-network",
+        action="store_true",
+        help="Explicitly allow binding to a non-loopback address. The web "
+             "viewer has no authentication; only use this on a trusted "
+             "network (e.g. Tailscale, LAN behind firewall).",
+    )
     args = parser.parse_args()
+
+    import sys
+    loopback = args.host in ("127.0.0.1", "localhost", "::1", "[::1]")
+    if not loopback and not args.unsafe_network:
+        print(
+            "\n  ERROR: --host is a non-loopback address "
+            f"({args.host}) but --unsafe-network was not passed.\n"
+            "\n  The web viewer has no authentication. Exposing it on a "
+            "network interface\n  means anyone who can reach that interface "
+            "can read your entire knowledge\n  graph. If you understand the "
+            "risk (e.g. Tailscale-only network), re-run with:\n\n"
+            f"    memento-web --host {args.host} --unsafe-network\n"
+        )
+        sys.exit(2)
+
+    # If user opted in to non-loopback, widen the TrustedHost allowlist to
+    # include the bound address (DNS-rebinding protection relaxed by consent).
+    if args.unsafe_network and not loopback:
+        for mw in app.user_middleware:
+            if mw.cls is TrustedHostMiddleware:
+                mw.kwargs["allowed_hosts"] = ["*"]
+                break
+        print(
+            "\n  WARNING: Binding to non-loopback address without authentication.\n"
+            "  Anyone who can reach this host:port can read your knowledge graph.\n"
+        )
 
     import uvicorn
     print(f"\n  Memento Knowledge Graph Viewer")
@@ -400,10 +467,10 @@ a:hover { text-decoration: underline; }
   <header class="header">
     <h1>Memento</h1>
     <div class="stats" id="stats"></div>
-    <nav>
-      <button class="active" onclick="switchView('detail')">Detail</button>
-      <button onclick="switchView('graph')">Graph</button>
-      <button onclick="switchView('timeline')">Timeline</button>
+    <nav id="view-nav">
+      <button class="active" data-view="detail">Detail</button>
+      <button data-view="graph">Graph</button>
+      <button data-view="timeline">Timeline</button>
     </nav>
   </header>
   <aside class="sidebar">
@@ -415,9 +482,9 @@ a:hover { text-decoration: underline; }
     <div class="empty-state"><h2>Select an entity</h2><p>Choose an entity from the sidebar to view details, or switch to Graph or Timeline view.</p></div>
   </main>
 </div>
-<div class="modal-overlay" id="modal" style="display:none" onclick="if(event.target===this)closeModal()">
+<div class="modal-overlay" id="modal" style="display:none">
   <div class="modal">
-    <button class="close" onclick="closeModal()">&times;</button>
+    <button class="close" id="modal-close">&times;</button>
     <div id="modal-content"></div>
   </div>
 </div>
@@ -443,20 +510,50 @@ async function init() {
      <div>Conflicts: <span>${health.unresolved_conflicts}</span></div>`;
 
   const types = [...new Set(entities.map(e => e.type))].sort();
-  document.getElementById('filters').innerHTML =
-    `<button class="active" onclick="setFilter(null, this)">All</button>` +
-    types.map(t => `<button onclick="setFilter('${t}', this)">${t}</button>`).join('');
+  const filtersEl = document.getElementById('filters');
+  filtersEl.innerHTML =
+    `<button class="active" data-filter-type="">All</button>` +
+    types.map(t => `<button data-filter-type="${esc(t)}">${esc(t)}</button>`).join('');
 
   renderEntityList(entities);
   document.getElementById('search').addEventListener('input', onSearch);
+
+  // ── Event delegation (no inline handlers; CSP forbids them) ──
+  document.getElementById('view-nav').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-view]');
+    if (btn) switchView(btn.dataset.view, btn);
+  });
+  filtersEl.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-filter-type]');
+    if (btn) setFilter(btn.dataset.filterType || null, btn);
+  });
+  document.getElementById('entity-list').addEventListener('click', e => {
+    const li = e.target.closest('li[data-entity-id]');
+    if (li) selectEntity(li.dataset.entityId);
+  });
+  document.getElementById('main').addEventListener('click', e => {
+    const relRow = e.target.closest('[data-entity-id]');
+    const histBtn = e.target.closest('button[data-history-key]');
+    const timelineLink = e.target.closest('a[data-timeline-entity]');
+    if (histBtn) {
+      showHistory(histBtn.dataset.historyEntity, histBtn.dataset.historyKey);
+    } else if (timelineLink) {
+      selectEntity(timelineLink.dataset.timelineEntity);
+    } else if (relRow && relRow.dataset.entityId) {
+      selectEntity(relRow.dataset.entityId);
+    }
+  });
+  const modal = document.getElementById('modal');
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+  document.getElementById('modal-close').addEventListener('click', closeModal);
 }
 
 // ── Sidebar ──
 function renderEntityList(entities) {
   const list = document.getElementById('entity-list');
   list.innerHTML = entities.map(e => `
-    <li class="entity-item ${e.id === selectedId ? 'selected' : ''}" onclick="selectEntity('${e.id}')">
-      <div class="name"><span class="type-badge type-${e.type}">${e.type}</span> ${esc(e.name)}</div>
+    <li class="entity-item ${e.id === selectedId ? 'selected' : ''}" data-entity-id="${esc(e.id)}">
+      <div class="name"><span class="type-badge type-${esc(e.type)}">${esc(e.type)}</span> ${esc(e.name)}</div>
       <div class="meta">${e.property_count} properties &middot; conf: ${(e.confidence * 100).toFixed(0)}%</div>
     </li>
   `).join('');
@@ -481,10 +578,10 @@ function setFilter(type, btn) {
 }
 
 // ── Views ──
-function switchView(view) {
+function switchView(view, btn) {
   currentView = view;
   document.querySelectorAll('.header nav button').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (btn) btn.classList.add('active');
   if (view === 'graph') renderGraph();
   else if (view === 'timeline') renderTimeline();
   else if (selectedId) selectEntity(selectedId);
@@ -498,7 +595,7 @@ async function selectEntity(id) {
   if (currentView === 'graph') { renderGraph(id); return; }
   if (currentView === 'timeline') { renderTimeline(id); return; }
 
-  const data = await fetch(`${API}/api/entities/${id}`).then(r => r.json());
+  const data = await fetch(`${API}/api/entities/${encodeURIComponent(id)}`).then(r => r.json());
   if (data.error) return;
 
   const props = Object.entries(data.properties);
@@ -507,16 +604,16 @@ async function selectEntity(id) {
   document.getElementById('main').innerHTML = `
     <div class="detail">
       <h2>${esc(data.name)}</h2>
-      <div class="entity-type"><span class="type-badge type-${data.type}">${data.type}</span>
+      <div class="entity-type"><span class="type-badge type-${esc(data.type)}">${esc(data.type)}</span>
         &nbsp; ${confBadge(data.confidence)} &nbsp;
-        <span style="color:var(--text-muted);font-size:12px">ID: ${data.id.slice(0,12)}...</span>
+        <span style="color:var(--text-muted);font-size:12px">ID: ${esc(data.id.slice(0,12))}...</span>
       </div>
       ${data.aliases.length ? `<div class="aliases">Also known as: ${data.aliases.map(esc).join(', ')}</div>` : ''}
       <section>
         <h3>Properties (${props.length})</h3>
         ${props.length ? `<table>${props.map(([k, v]) => `
           <tr>
-            <th>${esc(k)} <button class="history-btn" onclick="showHistory('${id}','${k}')">history</button></th>
+            <th>${esc(k)} <button class="history-btn" data-history-entity="${esc(id)}" data-history-key="${esc(k)}">history</button></th>
             <td>${esc(String(v.value))} ${confBadge(v.confidence)}</td>
           </tr>
         `).join('')}</table>` : '<p style="color:var(--text-muted);font-size:13px">No properties</p>'}
@@ -526,9 +623,9 @@ async function selectEntity(id) {
         ${rels.length ? `<table>
           <tr><th>Type</th><th>Entity</th><th>Status</th><th>Confidence</th></tr>
           ${rels.map(r => `
-            <tr class="rel-row" onclick="selectEntity('${r.other_id}')">
+            <tr class="rel-row" data-entity-id="${esc(r.other_id)}">
               <td>${r.direction === 'outgoing' ? '&rarr;' : '&larr;'} ${esc(r.type)}</td>
-              <td><span class="type-badge type-${r.other_type}">${r.other_type}</span> ${esc(r.other_name)}</td>
+              <td><span class="type-badge type-${esc(r.other_type)}">${esc(r.other_type)}</span> ${esc(r.other_name)}</td>
               <td>${r.valid_to ? '<span style="color:var(--red)">ended</span>' : '<span style="color:var(--green)">active</span>'}</td>
               <td>${confBadge(r.confidence)}</td>
             </tr>
@@ -538,8 +635,8 @@ async function selectEntity(id) {
       <section>
         <h3>Metadata</h3>
         <table>
-          <tr><th>Created</th><td>${data.created_at.slice(0,19)}</td></tr>
-          <tr><th>Last seen</th><td>${data.last_seen.slice(0,19)}</td></tr>
+          <tr><th>Created</th><td>${esc(data.created_at.slice(0,19))}</td></tr>
+          <tr><th>Last seen</th><td>${esc(data.last_seen.slice(0,19))}</td></tr>
           <tr><th>Access count</th><td>${data.access_count}</td></tr>
         </table>
       </section>
@@ -549,7 +646,8 @@ async function selectEntity(id) {
 
 // ── History Modal ──
 async function showHistory(entityId, key) {
-  const history = await fetch(`${API}/api/entities/${entityId}/history/${key}`).then(r => r.json());
+  const url = `${API}/api/entities/${encodeURIComponent(entityId)}/history/${encodeURIComponent(key)}`;
+  const history = await fetch(url).then(r => r.json());
   const mc = document.getElementById('modal-content');
   mc.innerHTML = `
     <h3>History: ${esc(key)}</h3>
@@ -558,8 +656,8 @@ async function showHistory(entityId, key) {
       ${history.map(h => `
         <tr>
           <td>${esc(String(h.value))}</td>
-          <td style="font-size:12px">${h.as_of.slice(0,19)}</td>
-          <td style="font-size:12px">${h.recorded_at.slice(0,19)}</td>
+          <td style="font-size:12px">${esc(h.as_of.slice(0,19))}</td>
+          <td style="font-size:12px">${esc(h.recorded_at.slice(0,19))}</td>
           <td>${confBadge(h.confidence)}</td>
           <td>${h.superseded_by_id ? '<span style="color:var(--red)">superseded</span>' : '<span style="color:var(--green)">current</span>'}</td>
         </tr>
@@ -691,7 +789,7 @@ async function renderTimeline(entityId) {
             <div style="font-size:10px;margin-top:2px">${e.recorded_at.slice(11,19)}</div>
           </div>
           <div class="timeline-content">
-            <a class="entity" onclick="selectEntity('${e.entity_id}')">${esc(e.entity_name)}</a>
+            <a class="entity" data-timeline-entity="${esc(e.entity_id)}">${esc(e.entity_name)}</a>
             <span class="timeline-badge ${e.type}">${e.type}</span><br>
             <span class="prop-key">${esc(e.property_key)}</span>:
             <span class="prop-val">${esc(String(e.value))}</span>

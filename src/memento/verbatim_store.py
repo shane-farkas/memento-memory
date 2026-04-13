@@ -79,8 +79,10 @@ class VerbatimStore:
         import sqlite_vec
 
         self.db.conn.enable_load_extension(True)
-        sqlite_vec.load(self.db.conn)
-        self.db.conn.enable_load_extension(False)
+        try:
+            sqlite_vec.load(self.db.conn)
+        finally:
+            self.db.conn.enable_load_extension(False)
 
         # Use executescript for DDL that contains triggers with semicolons
         self.db.conn.executescript(VERBATIM_DDL)

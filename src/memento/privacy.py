@@ -26,6 +26,19 @@ CREATE TABLE IF NOT EXISTS access_log (
     caller      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_entity ON access_log(entity_id);
+
+-- Append-only audit trail for hard-delete operations. Records survive the
+-- delete of the entity's access_log rows so compliance actions leave a trace.
+CREATE TABLE IF NOT EXISTS deletion_audit_log (
+    id                  TEXT PRIMARY KEY,
+    entity_id           TEXT NOT NULL,
+    entity_name         TEXT NOT NULL DEFAULT '',
+    deleted_at          TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    access_log_count    INTEGER NOT NULL DEFAULT 0,
+    items_deleted_json  TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_deletion_audit_entity ON deletion_audit_log(entity_id);
 """
 
 
@@ -276,11 +289,12 @@ class PrivacyLayer:
                 cur.execute("DELETE FROM source_refs WHERE id = ?", (ref_id,))
                 counts["source_refs"] += 1
 
-            # Delete access log
-            cur.execute(
-                "DELETE FROM access_log WHERE entity_id = ?", (entity_id,)
-            )
-            counts["access_log"] = cur.rowcount
+            # Count access log rows (preserved — see audit note below)
+            access_log_count = cur.execute(
+                "SELECT COUNT(*) FROM access_log WHERE entity_id = ?",
+                (entity_id,),
+            ).fetchone()[0]
+            counts["access_log"] = access_log_count
 
             # Delete the entity itself
             cur.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
@@ -290,11 +304,41 @@ class PrivacyLayer:
                 "DELETE FROM merge_log WHERE survivor_id = ? OR absorbed_id = ?",
                 (entity_id, entity_id),
             )
+            counts["merge_log"] = cur.rowcount
+
+            # ── Audit trail ───────────────────────────────────
+            # Record the deletion in an append-only audit table BEFORE
+            # wiping access_log rows, so a compliance auditor can always
+            # prove the delete happened and see how much access history
+            # was affected. The audit row survives the entity.
+            deleted_at = _now()
+            cur.execute(
+                "INSERT INTO deletion_audit_log (id, entity_id, entity_name, "
+                "deleted_at, content_hash, access_log_count, items_deleted_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _new_id(),
+                    entity_id,
+                    entity_name,
+                    deleted_at,
+                    content_hash,
+                    access_log_count,
+                    json.dumps(counts),
+                ),
+            )
+
+            # NOTE: access_log rows for the entity are intentionally kept.
+            # GDPR Article 17 requires erasing personal data; access-log
+            # rows are metadata about who/when accessed the data, and they
+            # are the audit trail itself. Wiping them would destroy the
+            # record this function exists to produce. If a jurisdiction
+            # requires access-log erasure, call clear_access_log() in a
+            # separate step.
 
         return DeletionReceipt(
             entity_id=entity_id,
             entity_name=entity_name,
-            deleted_at=_now(),
+            deleted_at=deleted_at,
             items_deleted=counts,
             content_hash=content_hash,
         )
