@@ -21,6 +21,34 @@ I have been evaluating Memento on [LongMemEval](https://github.com/xiaowu0162/lo
 | **Overall** | **454** | **500** | **90.8%** |
 | **Task-averaged** | | | **92.2%** |
 
+### Comparison vs Baselines
+
+To isolate what Memento's knowledge graph actually contributes, we ran the same 500 oracle questions through two simpler memory strategies using the same answer model (Claude Sonnet 4.6) and the same GPT-4o judge. Only the memory layer differs.
+
+**Baselines:**
+
+- **Vector store** — Standard RAG. Each conversation turn is chunked and embedded with `sentence-transformers/all-MiniLM-L6-v2`. For each question, we retrieve the top-30 most similar chunks by cosine similarity and pass them to the answer LLM. No entity resolution, no graph, no temporal reasoning — just text similarity.
+- **Markdown file** *(in progress)* — Simulates the CLAUDE.md / USER.md pattern: an LLM distills each conversation into bulleted facts and appends them to a markdown file. For each question, the full file is passed as context. This is how most AI coding agents handle persistent memory today.
+
+| Category | Vector Store | Memento | Δ |
+|---|--:|--:|--:|
+| single-session-assistant | 100.0% | 98.2% | −1.8 |
+| single-session-preference | 100.0% | 93.3% | −6.7 |
+| single-session-user | 94.3% | 97.1% | +2.8 |
+| knowledge-update | 87.2% | 88.5% | +1.3 |
+| multi-session | **67.7%** | **86.5%** | **+18.8** |
+| temporal-reasoning | **66.9%** | **89.5%** | **+22.6** |
+| **Overall** | **79.8%** | **90.8%** | **+11.0** |
+| **Task-averaged** | **86.0%** | **92.2%** | **+6.2** |
+
+**What the gaps tell us:**
+
+- **Single-session questions are tied.** Both systems trivially find a fact within one conversation. Vector retrieval is enough when the needle is in one haystack.
+- **Preference questions favor the vector baseline slightly** (100% vs 93.3%). These questions just need to find *any* relevant turn, and top-30 similarity search rarely misses.
+- **Multi-session and temporal reasoning are where Memento wins decisively** — +18.8pp and +22.6pp respectively. These questions require *composing* information across conversations: knowing that John who was mentioned in session 3 is the same John from session 7, ordering events by date, or preferring the most recent value. Flat vector search has no way to connect chunks across conversations or reason about time.
+
+The overall 11-point gap isolates the value of structured memory. Similarity search is sufficient for simple lookups but breaks down when the answer requires synthesis.
+
 ### Question Categories
 
 The 500 questions span six categories of increasing difficulty:

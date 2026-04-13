@@ -167,6 +167,20 @@ Bitemporal Knowledge Graph (SQLite)
 | Multi-session | 86.5% |
 | **Task-averaged** | **92.2%** |
 
+### vs Flat Vector Store
+
+To isolate what structured memory contributes, we ran the same 500 questions through a standard RAG baseline — `sentence-transformers/all-MiniLM-L6-v2` embeddings, cosine similarity, top-30 retrieval, same Claude Sonnet 4.6 answer model, same GPT-4o judge. Only the memory layer differs.
+
+| Category | Vector Store | Memento | Δ |
+|---|--:|--:|--:|
+| Single-session (all 3) | 94–100% | 93–98% | ~tie |
+| Knowledge update | 87.2% | 88.5% | +1.3 |
+| Multi-session | **67.7%** | **86.5%** | **+18.8** |
+| Temporal reasoning | **66.9%** | **89.5%** | **+22.6** |
+| **Overall** | **79.8%** | **90.8%** | **+11.0** |
+
+Similarity search handles single-conversation lookups fine. It breaks down on multi-session synthesis and temporal reasoning — the two categories where structured memory earns its keep.
+
 ### Any Model, Same Memory
 
 Memento is model-agnostic. The same knowledge graph works across providers — only the answer-generation LLM changes. Results on a 50-question stratified sample:
