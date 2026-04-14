@@ -5,13 +5,13 @@
 ![GitHub License](https://img.shields.io/github/license/shane-farkas/memento-memory)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/shane-farkas/memento-memory/test.yml?label=tests)
 
-**Any model, same memory.** A bitemporal knowledge graph — tracking when facts were true vs. when they were learned — that gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
+Memento is a bitemporal knowledge graph, tracking when facts were true vs. when they were learned, which gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
 
-Most AI memory systems dump text into a vector store and retrieve by similarity. Memento builds a knowledge graph that resolves entities, detects contradictions, tracks time, and composes answers from structured relationships rather than raw chunks.
+Most AI memory systems use folders of text files or dump text into a vector store and retrieve by similarity. Memento builds a knowledge graph that resolves entities, detects contradictions, tracks time, and composes answers from structured relationships rather than raw chunks.
 
-Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Cline, Windsurf, OpenClaw, Continue.dev) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
+Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Codex, Cline, Windsurf, OpenClaw) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
 
-**90.8% overall accuracy, 92.2% task average on [LongMemEval](BENCHMARKS.md)** (500 questions, GPT-4o judge) — a benchmark for long-term conversational memory covering temporal reasoning, knowledge updates, multi-session recall, and preference tracking.
+**90.8% overall accuracy, 92.2% task average on [LongMemEval](BENCHMARKS.md)** (500 questions, end-to-end, GPT-4o judge), a benchmark for long-term conversational memory covering temporal reasoning, knowledge updates, multi-session recall, and preference tracking.
 
 ## Quick start
 
@@ -128,7 +128,7 @@ session.end()  # Flushes through ingestion pipeline
 
 ## LLM providers
 
-Memento is provider-agnostic. Swap the backend via config — no code changes.
+Memento is provider-agnostic. Swap the backend via config with no code changes.
 
 | Provider | Install | Config |
 |---|---|---|
@@ -154,14 +154,14 @@ Bitemporal Knowledge Graph (SQLite)
   └── Privacy Layer (export, audit, hard delete)
 ```
 
-- **Entity resolution** — "John," "John Smith," and "the Alpha guy" become one node. Tiered matching: exact/fuzzy/phonetic (cheap) before embedding similarity and LLM tiebreaker (expensive).
-- **Contradiction detection** — flags when new facts conflict with existing ones.
-- **Bitemporal model** — every fact tracks when it was true (valid time) and when the system learned it (transaction time).
-- **Immutable history** — facts are never deleted, only superseded. Full audit trail.
-- **Verbatim fallback** — raw text stored alongside the graph, so extraction loss doesn't mean information loss.
-- **Compositional retrieval** — "What should I know before my meeting with John?" traverses the graph, not just retrieves chunks.
-- **Confidence decay** — multiplicative decay prevents artificial confidence floors from repeated confirmations.
-- **Consolidation** — background engine decays stale info, merges duplicates, prunes orphans.
+- **Entity resolution** - "John," "John Smith," and "the Alpha Corp guy" become one node. Tiered matching: exact/fuzzy/phonetic (cheap) before embedding similarity and LLM tiebreaker (expensive).
+- **Contradiction detection** - flags when new facts conflict with existing ones.
+- **Bitemporal model** - every fact tracks when it was true (valid time) and when the system learned it (transaction time).
+- **Immutable history** - facts are never deleted, only superseded. Full audit trail.
+- **Verbatim fallback** - raw text stored alongside the graph, so extraction loss doesn't mean information loss.
+- **Compositional retrieval** - "What should I know before my meeting with John?" traverses the graph, not just retrieves chunks.
+- **Confidence decay** - multiplicative decay prevents artificial confidence floors from repeated confirmations.
+- **Consolidation** - background engine decays stale info, merges duplicates, prunes orphans.
 
 ## Benchmarks
 
@@ -177,14 +177,14 @@ Bitemporal Knowledge Graph (SQLite)
 | Multi-session | 86.5% |
 | **Task-averaged** | **92.2%** |
 
-> **What this number actually measures.** This is the full pipeline, not a retrieval-only metric like `recall@k` or `R@5`. For each of the 500 questions, we ingest the haystack sessions, retrieve context via `store.recall()`, generate an answer with the LLM, and have GPT-4o judge the answer against the reference using LongMemEval's task-specific judge prompts. A question only counts as correct if the retrieved context was sufficient *and* the LLM composed a correct answer from it *and* the judge agrees it matches the reference. No per-question tuning, no hand-curated prompts, no oracle routing — the harness is one file: [`benchmarks/longmemeval/run_benchmark.py`](benchmarks/longmemeval/run_benchmark.py). Reproduce with `python run_benchmark.py run --variant oracle`.
+> **What this number actually measures.** This is the full pipeline, not a retrieval-only metric like `recall@k` or `R@5`. For each of the 500 questions, we ingest the haystack sessions, retrieve context via `store.recall()`, generate an answer with the LLM, and have GPT-4o judge the answer against the reference using LongMemEval's task-specific judge prompts. A question only counts as correct if the retrieved context was sufficient *and* the LLM composed a correct answer from it *and* the judge agrees it matches the reference. No per-question tuning, hand-curated prompts, or oracle routing. The harness is one file: [`benchmarks/longmemeval/run_benchmark.py`](benchmarks/longmemeval/run_benchmark.py). Reproduce with `python run_benchmark.py run --variant oracle`.
 
 ### vs. baselines
 
-To isolate what structured memory contributes, we ran the same 500 questions through two simpler approaches. Same dataset, same answer model (Claude Sonnet 4.6), same `ANSWER_PROMPT`, same 4,000-token context budget, same GPT-4o judge — only the recall layer differs.
+To isolate what structured memory contributes, we ran the same 500 questions through two simpler approaches. Same dataset, same answer model (Claude Sonnet 4.6), same `ANSWER_PROMPT`, same 4,000-token context budget, same GPT-4o judge, and only the recall layer differs.
 
-- **Vector store** — a minimal in-memory RAG system. Each haystack turn is embedded individually with `sentence-transformers/all-MiniLM-L6-v2` (the same model Memento uses) and stored in a numpy array. At query time, cosine similarity returns the top-30 most similar turns, which are concatenated (with their session dates) into the context block. No chunking, no reranker, no graph — pure similarity search.
-- **Markdown file** — simulates the CLAUDE.md / USER.md / mem0 pattern. For each session, an LLM distills the conversation into bulleted facts tagged with the session date and appends them to a single markdown file. At query time, the full file is truncated to the token budget and passed into the answer prompt. This is how most AI coding agents handle persistent memory today.
+- **Vector store** - a minimal in-memory RAG system. Each haystack turn is embedded individually with `sentence-transformers/all-MiniLM-L6-v2` (the same model Memento uses) and stored in a numpy array. At query time, cosine similarity returns the top-30 most similar turns, which are concatenated (with their session dates) into the context block. No chunking, no reranker, no graph, just pure similarity search.
+- **Markdown file** - simulates the CLAUDE.md / USER.md / mem0 pattern. For each session, an LLM distills the conversation into bulleted facts tagged with the session date and appends them to a single markdown file. At query time, the full file is truncated to the token budget and passed into the answer prompt.
 
 | Category | Markdown | Vector | **Memento** |
 |---|--:|--:|--:|
@@ -196,11 +196,11 @@ To isolate what structured memory contributes, we ran the same 500 questions thr
 | Temporal reasoning | 82.0% | 66.9% | **89.5%** |
 | **Overall** | 80.8% | 79.8% | **90.8%** |
 
-Vector retrieval handles single-conversation lookups fine but falls apart on multi-session synthesis and temporal reasoning. Markdown extraction captures some cross-session structure but loses ~60% of assistant-side questions because LLM distillation skews toward user statements. Memento is the only approach without a catastrophic failure mode — its worst category is 86.5% vs. 41.1% (markdown) and 66.9% (vector).
+Vector retrieval handles single-conversation lookups fine but falls apart on multi-session synthesis and temporal reasoning. Markdown extraction captures some cross-session structure but loses ~60% of assistant-side questions because LLM distillation skews toward user statements. Memento is the only approach without a real failure mode with its worst category at 86.5% vs. 41.1% (markdown) and 66.9% (vector).
 
 ### Any model, same memory
 
-Memento is model-agnostic. The same knowledge graph works across providers — only the answer-generation LLM changes. Same Memento graph, same retrieval pipeline, same GPT-4o judge.
+Memento is model-agnostic. The same knowledge graph works across providers - only the answer-generation LLM changes. Same Memento graph, retrieval pipeline, and GPT-4o judge.
 
 **Full 500-question runs:**
 
@@ -211,7 +211,7 @@ Memento is model-agnostic. The same knowledge graph works across providers — o
 | GLM 5.1 FP4 | Together (Zhipu) | 87.4% | 90.2% |
 | Qwen 3 235B A22B | Together (Alibaba) | 79.6% | 80.1% |
 
-MiniMax M2.7 essentially ties Claude Sonnet 4.6 on the full 500-question run, and GLM 5.1 is within a few points. When the memory layer is structured and retrieval is strong, the answer model doesn't need to be the flagship — a competitive open-source model matches proprietary performance.
+MiniMax M2.7 essentially ties Claude Sonnet 4.6 on the full 500-question run, and GLM 5.1 is within a few points. When the memory layer is structured and retrieval is strong, the answer model doesn't need to be the flagship. A competitive open-source model matches proprietary performance.
 
 Full methodology and reproduction steps: [BENCHMARKS.md](BENCHMARKS.md)
 
@@ -224,7 +224,7 @@ pip install memento-memory[web]
 memento-web
 ```
 
-Open http://localhost:8766. The viewer reads from the same `~/.memento/memento.db` that `memento-mcp` writes to — you can watch your agent's memories update in real time.
+Open http://localhost:8766. The viewer reads from the same `~/.memento/memento.db` that `memento-mcp` writes to so you can watch your agent's memories update in real time.
 
 ![Memento graph viewer](docs/graph-viewer.png)
 
