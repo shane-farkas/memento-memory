@@ -4,7 +4,7 @@
 
 I have been evaluating Memento on [LongMemEval](https://github.com/xiaowu0162/longmemeval), a benchmark designed to test chat assistants on long-term interactive memory. The benchmark presents 500 questions that require recalling and reasoning over information scattered across multiple past conversation sessions.
 
-**Paper:** "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory" — [arXiv](https://arxiv.org/abs/2410.10813)
+**Paper:** "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory" - [arXiv](https://arxiv.org/abs/2410.10813)
 
 ### What "accuracy" means here
 
@@ -18,7 +18,7 @@ Every number in this document is **end-to-end accuracy**, not retrieval-only. Th
 
 All three stages have to succeed. Retrieval failures, reasoning failures, and formatting mismatches all count as wrong. The full 500-question run is uniform: no per-question tuning, no hand-curated prompts, no oracle routing, one harness file ([`benchmarks/longmemeval/run_benchmark.py`](benchmarks/longmemeval/run_benchmark.py)), one answer model, one judge.
 
-This matters because benchmark numbers on LongMemEval from different projects are often not directly comparable — some report retrieval-only metrics, some report on 50-question samples, some hand-tune per category. Everything below is the same thing across every row: ingest → recall → generate → judge, 500 questions, reproducible.
+This matters because benchmark numbers on LongMemEval from different projects are often not directly comparable - some report retrieval-only metrics, some report on 50-question samples, some hand-tune per category. Everything below is the same thing across every row: ingest → recall → generate → judge, across all 500 questions, and is reproducible.
 
 ### Results
 
@@ -37,13 +37,13 @@ This matters because benchmark numbers on LongMemEval from different projects ar
 
 ### Comparison vs Baselines
 
-To isolate what Memento's knowledge graph actually contributes, we ran the same 500 oracle questions through two simpler memory strategies. Only the recall layer differs — every baseline uses the same dataset, the same haystack ingestion loop, the same answer model (Claude Sonnet 4.6), the same `ANSWER_PROMPT`, the same 4,000-token context budget, and the same GPT-4o judge with task-specific prompts.
+To isolate what Memento's knowledge graph actually contributes, we ran the same 500 oracle questions through two simpler memory strategies. Only the recall layer differs, so every baseline uses the same dataset, the same haystack ingestion loop, the same answer model (Claude Sonnet 4.6), the same `ANSWER_PROMPT`, the same 4,000-token context budget, and the same GPT-4o judge with task-specific prompts.
 
-**Vector store baseline** ([`baselines/run_vector_baseline.py`](benchmarks/longmemeval/baselines/run_vector_baseline.py)) — a minimal in-memory RAG system. Each haystack conversation turn is embedded individually with `sentence-transformers/all-MiniLM-L6-v2` (the same model Memento uses) and stored as a `(text, embedding)` pair in a numpy array. At query time, the question is embedded, cosine similarity is computed against all turns via a single matrix multiplication, and the top-30 results are concatenated (each turn prefixed by its `[Conversation date: ...]` header) into the context block. No chunking, no reranker, no graph, no temporal awareness — pure similarity search.
+**Vector store baseline** ([`baselines/run_vector_baseline.py`](benchmarks/longmemeval/baselines/run_vector_baseline.py)) - a minimal in-memory RAG system. Each haystack conversation turn is embedded individually with `sentence-transformers/all-MiniLM-L6-v2` (the same model Memento uses) and stored as a `(text, embedding)` pair in a numpy array. At query time, the question is embedded, cosine similarity is computed against all turns via a single matrix multiplication, and the top-30 results are concatenated (each turn prefixed by its `[Conversation date: ...]` header) into the context block. No chunking, no reranker, no graph, no temporal awareness — pure similarity search.
 
-**Markdown baseline** ([`baselines/run_markdown_baseline.py`](benchmarks/longmemeval/baselines/run_markdown_baseline.py)) — a per-session LLM extraction pipeline. For each conversation session, an LLM is prompted to extract bulleted facts worth remembering (with each bullet tagged by session date) and those bullets are appended to a single markdown file. At query time, the entire accumulated markdown file is truncated to a 4,000-token budget and passed into the answer prompt. This simulates the CLAUDE.md / USER.md / mem0 "append facts to a file" pattern that most AI coding agents use for persistent memory today.
+**Markdown baseline** ([`baselines/run_markdown_baseline.py`](benchmarks/longmemeval/baselines/run_markdown_baseline.py)) - a per-session LLM extraction pipeline. For each conversation session, an LLM is prompted to extract bulleted facts worth remembering (with each bullet tagged by session date) and those bullets are appended to a single markdown file. At query time, the entire accumulated markdown file is truncated to a 4,000-token budget and passed into the answer prompt. This simulates the CLAUDE.md / USER.md / mem0 "append facts to a file" pattern that most AI coding agents use for persistent memory today.
 
-The only thing that changes between the three runs is the recall step — how the system stores and retrieves information before handing it to the answer LLM. That isolates the contribution of structured memory from everything else in the pipeline.
+The only thing that changes between the three runs is the recall step of how the system stores and retrieves information before handing it to the answer LLM. That isolates the contribution of structured memory from everything else in the pipeline.
 
 | Category | Markdown | Vector Store | Memento |
 |---|--:|--:|--:|
@@ -58,26 +58,26 @@ The only thing that changes between the three runs is the recall step — how th
 
 **What the gaps tell us:**
 
-- **Single-session questions are mostly easy for all three approaches** — except the markdown baseline, which catastrophically drops to 41.1% on assistant-side questions. The LLM fact extractor is biased toward capturing what the *user* said and loses assistant statements. This is a structural weakness of LLM-distilled summaries: extraction is lossy, and information that doesn't match the "memorable fact" pattern gets dropped.
+- **Single-session questions are mostly easy for all three approaches** - except the markdown baseline, which catastrophically drops to 41.1% on assistant-side questions. The LLM fact extractor is biased toward capturing what the *user* said and loses assistant statements. This is a structural weakness of LLM-distilled summaries: extraction is lossy, and information that doesn't match the "memorable fact" pattern gets dropped.
 - **Vector retrieval is surprisingly strong on single-session questions** (94–100%). When the needle is in one haystack, cosine similarity just works.
-- **Vector falls apart on multi-session and temporal reasoning** (67.7% and 66.9%). These questions require composing information across conversations — flat similarity search has no way to connect chunks or reason about time.
+- **Vector falls apart on multi-session and temporal reasoning** (67.7% and 66.9%). These questions require composing information across conversations - flat similarity search has no way to connect chunks or reason about time.
 - **Markdown holds up better than vector on multi-session and temporal** (80.5% and 82.0%) because the LLM extraction captures some structure across sessions. But it pays the price in the extraction step, catastrophically missing certain categories.
 - **Memento is the only approach without a catastrophic category failure.** Its worst category is 86.5% vs 41.1% (markdown) and 66.9% (vector). The knowledge graph retains all facts with their provenance and temporal anchoring, so retrieval doesn't depend on an upfront "what's memorable" decision or a pure similarity signal.
 
-The overall 10-point gap over both baselines isolates the value of structured, bitemporal memory. Vector and markdown approaches each win on specific categories, but neither covers the full space. Memento's worst category is still 86.5% — every approach to memory eventually fails somewhere, but structure keeps the floor high.
+The overall 10-point gap over both baselines isolates the value of structured, bitemporal memory. Vector and markdown approaches each win on specific categories, but neither covers the full space. Memento's worst category is still 86.5% - every approach to memory eventually fails somewhere, but structure keeps the floor high.
 
 ### Question Categories
 
 The 500 questions span six categories of increasing difficulty:
 
-- **single-session-user** (70) — Recall facts stated by the user in a single conversation
-- **single-session-assistant** (56) — Recall facts stated by the assistant in a single conversation
-- **single-session-preference** (30) — Apply user preferences revealed in a single conversation
-- **multi-session** (133) — Synthesize information scattered across multiple conversations
-- **knowledge-update** (78) — Return the most recent value when a fact changes over time
-- **temporal-reasoning** (133) — Reason about when events happened, their order, or time spans between them
+- **single-session-user** (70): Recall facts stated by the user in a single conversation
+- **single-session-assistant** (56): Recall facts stated by the assistant in a single conversation
+- **single-session-preference** (30): Apply user preferences revealed in a single conversation
+- **multi-session** (133): Synthesize information scattered across multiple conversations
+- **knowledge-update** (78): Return the most recent value when a fact changes over time
+- **temporal-reasoning** (133): Reason about when events happened, their order, or time spans between them
 
-Each question also has an abstention variant (suffixed `_abs`) where the correct answer is "I don't know" — testing that the system doesn't hallucinate.
+Each question also has an abstention variant (suffixed `_abs`) where the correct answer is "I don't know" which tests that the system doesn't hallucinate.
 
 ### Dataset Variants
 
@@ -95,13 +95,13 @@ The `oracle` variant isolates retrieval quality from needle-in-haystack search. 
 
 Each question is processed through this pipeline:
 
-1. **Ingest** — All haystack sessions for a question are ingested into a fresh in-memory MemoryStore. Each session runs through Memento's full pipeline: entity extraction, entity resolution, relationship extraction, temporal tagging, and verbatim storage. Session dates are preserved as `[Conversation date: ...]` headers.
+1. **Ingest** - All haystack sessions for a question are ingested into a fresh in-memory MemoryStore. Each session runs through Memento's full pipeline: entity extraction, entity resolution, relationship extraction, temporal tagging, and verbatim storage. Session dates are preserved as `[Conversation date: ...]` headers.
 
-2. **Recall** — `store.recall(question, token_budget=4000, as_of=question_date)` retrieves relevant context. This uses Memento's compositional retrieval: keyword search (FTS5), semantic search (embeddings), and knowledge graph traversal up to 3 hops. The `as_of` parameter ensures temporal correctness so the system only sees information available at the question's date.
+2. **Recall** - `store.recall(question, token_budget=4000, as_of=question_date)` retrieves relevant context. This uses Memento's compositional retrieval: keyword search (FTS5), semantic search (embeddings), and knowledge graph traversal up to 3 hops. The `as_of` parameter ensures temporal correctness so the system only sees information available at the question's date.
 
-3. **Answer** — An LLM generates an answer from the retrieved context. The prompt instructs the model to use conversation dates for temporal reasoning, prefer the most recent value for updated facts, apply known preferences concretely, and enumerate before counting. Temperature is set to 0.0 for reproducibility.
+3. **Answer** - An LLM generates an answer from the retrieved context. The prompt instructs the model to use conversation dates for temporal reasoning, prefer the most recent value for updated facts, apply known preferences concretely, and enumerate before counting. Temperature is set to 0.0 for reproducibility.
 
-4. **Judge** — A GPT-4o judge compares the generated answer against the reference using task-specific prompts (e.g., temporal questions allow off-by-one tolerance, knowledge-update questions accept mentioning old values if the current one is identified). The judge outputs "yes" or "no".
+4. **Judge** - A GPT-4o judge compares the generated answer against the reference using task-specific prompts (e.g., temporal questions allow off-by-one tolerance, knowledge-update questions accept mentioning old values if the current one is identified). The judge outputs "yes" or "no".
 
 #### MemoryStore Configuration
 
