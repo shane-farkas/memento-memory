@@ -76,6 +76,33 @@ class GraphStore:
         logger.debug("Created entity: %s (%s)", entity.name, entity.id)
         return entity
 
+    def record_mention(self, entity_id: str, conversation_id: str) -> None:
+        """Bump mention_count and refresh source_count for an entity.
+
+        Called once per ingest per resolved entity, regardless of whether
+        the entity was newly created or matched to an existing record.
+        Distinct conversation_ids are tracked in entity_sources so
+        source_count reflects how widely an entity has been observed.
+        """
+        if not conversation_id:
+            return
+        with self.db.transaction() as cur:
+            cur.execute(
+                """INSERT OR IGNORE INTO entity_sources
+                       (entity_id, conversation_id, first_seen)
+                   VALUES (?, ?, ?)""",
+                (entity_id, conversation_id, _now()),
+            )
+            cur.execute(
+                """UPDATE entities
+                       SET mention_count = mention_count + 1,
+                           source_count  = (SELECT COUNT(*)
+                                            FROM entity_sources
+                                            WHERE entity_id = ?)
+                     WHERE id = ?""",
+                (entity_id, entity_id),
+            )
+
     def get_entity(self, entity_id: str) -> Entity | None:
         """Get an entity by ID, including aliases and current properties."""
         row = self.db.fetchone(

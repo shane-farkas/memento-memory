@@ -216,6 +216,7 @@ class MemoryStore:
                 )
                 created.append(entity.name)
 
+            self.graph.record_mention(entity.id, conversation_id)
             entity_map[ee.name] = entity
 
             # Set properties with conflict detection

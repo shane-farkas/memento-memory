@@ -285,3 +285,66 @@ def test_stats(store):
     assert s["edge_count"] == 1
     assert s["active_property_count"] == 1
     assert s["avg_confidence"] == 1.0
+
+
+# ── Tier counters ────────────────────────────────────────────────
+
+
+def test_new_entity_starts_with_zero_counters(store):
+    e = store.create_entity("Alice", EntityType.PERSON)
+    row = store.db.fetchone(
+        "SELECT mention_count, source_count, tier FROM entities WHERE id = ?",
+        (e.id,),
+    )
+    assert row["mention_count"] == 0
+    assert row["source_count"] == 0
+    assert row["tier"] == 3
+
+
+def test_record_mention_bumps_counters(store):
+    e = store.create_entity("Alice", EntityType.PERSON)
+    store.record_mention(e.id, "conv-1")
+    row = store.db.fetchone(
+        "SELECT mention_count, source_count FROM entities WHERE id = ?",
+        (e.id,),
+    )
+    assert row["mention_count"] == 1
+    assert row["source_count"] == 1
+
+
+def test_record_mention_dedupes_same_conversation(store):
+    e = store.create_entity("Alice", EntityType.PERSON)
+    store.record_mention(e.id, "conv-1")
+    store.record_mention(e.id, "conv-1")
+    store.record_mention(e.id, "conv-1")
+    row = store.db.fetchone(
+        "SELECT mention_count, source_count FROM entities WHERE id = ?",
+        (e.id,),
+    )
+    # mention_count rises every call; source_count is distinct conversations only
+    assert row["mention_count"] == 3
+    assert row["source_count"] == 1
+
+
+def test_record_mention_counts_distinct_sources(store):
+    e = store.create_entity("Alice", EntityType.PERSON)
+    store.record_mention(e.id, "conv-1")
+    store.record_mention(e.id, "conv-2")
+    store.record_mention(e.id, "conv-3")
+    row = store.db.fetchone(
+        "SELECT mention_count, source_count FROM entities WHERE id = ?",
+        (e.id,),
+    )
+    assert row["mention_count"] == 3
+    assert row["source_count"] == 3
+
+
+def test_record_mention_ignores_empty_conversation(store):
+    e = store.create_entity("Alice", EntityType.PERSON)
+    store.record_mention(e.id, "")
+    row = store.db.fetchone(
+        "SELECT mention_count, source_count FROM entities WHERE id = ?",
+        (e.id,),
+    )
+    assert row["mention_count"] == 0
+    assert row["source_count"] == 0

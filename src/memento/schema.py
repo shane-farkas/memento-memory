@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from memento.db import Database
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL = """
 -- Core entity table
@@ -17,12 +17,27 @@ CREATE TABLE IF NOT EXISTS entities (
     access_count    INTEGER NOT NULL DEFAULT 0,
     confidence      REAL NOT NULL DEFAULT 1.0,
     archived        INTEGER NOT NULL DEFAULT 0,
-    merged_into     TEXT REFERENCES entities(id)
+    merged_into     TEXT REFERENCES entities(id),
+    mention_count   INTEGER NOT NULL DEFAULT 0,
+    source_count    INTEGER NOT NULL DEFAULT 0,
+    tier            INTEGER NOT NULL DEFAULT 3
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
 CREATE INDEX IF NOT EXISTS idx_entities_archived ON entities(archived);
+CREATE INDEX IF NOT EXISTS idx_entities_tier ON entities(tier);
+
+-- Distinct conversation sources that mentioned each entity.
+-- Powers source_count and the future tier-promotion pass.
+CREATE TABLE IF NOT EXISTS entity_sources (
+    entity_id       TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL,
+    first_seen      TEXT NOT NULL,
+    PRIMARY KEY (entity_id, conversation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_sources_conv ON entity_sources(conversation_id);
 
 -- Entity aliases (many-to-one)
 CREATE TABLE IF NOT EXISTS entity_aliases (
@@ -133,18 +148,49 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
+def _migrate_v1_to_v2(db: Database) -> None:
+    """Add tier-counter columns and entity_sources table to a v1 database."""
+    cols = {row[1] for row in db.fetchall("PRAGMA table_info(entities)")}
+    if "mention_count" not in cols:
+        db.execute("ALTER TABLE entities ADD COLUMN mention_count INTEGER NOT NULL DEFAULT 0")
+    if "source_count" not in cols:
+        db.execute("ALTER TABLE entities ADD COLUMN source_count INTEGER NOT NULL DEFAULT 0")
+    if "tier" not in cols:
+        db.execute("ALTER TABLE entities ADD COLUMN tier INTEGER NOT NULL DEFAULT 3")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_entities_tier ON entities(tier)")
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS entity_sources (
+            entity_id       TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+            conversation_id TEXT NOT NULL,
+            first_seen      TEXT NOT NULL,
+            PRIMARY KEY (entity_id, conversation_id)
+        )"""
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_entity_sources_conv ON entity_sources(conversation_id)")
+
+
 def create_tables(db: Database) -> None:
-    """Create all Memento tables if they don't exist. Idempotent."""
+    """Create all Memento tables if they don't exist. Idempotent.
+
+    Also upgrades a v1 database in place to the current SCHEMA_VERSION
+    so existing users keep working after an upgrade.
+    """
     for statement in DDL.split(";"):
         statement = statement.strip()
         if statement:
             db.execute(statement)
     db.conn.commit()
 
-    # Set schema version if not already set
     row = db.fetchone("SELECT version FROM schema_version LIMIT 1")
     if row is None:
         db.execute(
             "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
         )
+        db.conn.commit()
+        return
+
+    current_version = row[0]
+    if current_version < 2:
+        _migrate_v1_to_v2(db)
+        db.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
         db.conn.commit()
