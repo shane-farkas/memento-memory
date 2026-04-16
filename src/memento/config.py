@@ -92,6 +92,20 @@ class ConsolidationConfig:
 
 
 @dataclass
+class IngestConfig:
+    """Configuration for the ingest pipeline gate.
+
+    The gate is opt-in. When disabled (default), every call to
+    MemoryStore.ingest runs the full extraction pipeline — matching
+    historical behavior, keeping benchmarks deterministic.
+    """
+
+    gate_enabled: bool = False
+    gate_min_chars: int = 20
+    gate_store_verbatim_on_skip: bool = True
+
+
+@dataclass
 class MementoConfig:
     """Top-level configuration for the Memento system."""
 
@@ -101,6 +115,7 @@ class MementoConfig:
     resolution: ResolutionConfig = field(default_factory=ResolutionConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+    ingest: IngestConfig = field(default_factory=IngestConfig)
 
     def __post_init__(self) -> None:
         db = os.environ.get("MEMENTO_DB_PATH")

@@ -13,6 +13,7 @@ from memento.db import Database
 from memento.embedder import Embedder, create_embedder
 from memento.entity_resolution import EntityResolver, Tier2EntityResolver
 from memento.extraction import EntityExtractor, RelationExtractor
+from memento.gating import Gate, GateDecision, PreFilterGate
 from memento.graph_store import GraphStore
 from memento.models import (
     Conflict,
@@ -40,6 +41,8 @@ class IngestResult:
     relationships_created: int
     conflicts_detected: int
     verbatim_chunk_id: str
+    gated_out: bool = False
+    gate_reason: str = ""
 
 
 @dataclass
@@ -140,6 +143,12 @@ class MemoryStore:
         self._privacy = PrivacyLayer(self.graph)
         self._ingestion_count = 0
 
+        self._gate: Gate | None = (
+            PreFilterGate(min_chars=self.config.ingest.gate_min_chars)
+            if self.config.ingest.gate_enabled
+            else None
+        )
+
     def close(self) -> None:
         """Close the database connection."""
         self._db.close()
@@ -160,6 +169,7 @@ class MemoryStore:
         source_type: str = "conversation",
         authority: float = 0.9,
         timestamp: str | None = None,
+        bypass_gate: bool = False,
     ) -> IngestResult:
         """Process raw text and update the knowledge graph.
 
@@ -170,8 +180,37 @@ class MemoryStore:
             timestamp: Optional ISO-8601 timestamp for historical ingestion.
                        When set, the source reference and property as_of times
                        use this value instead of the current wall-clock time.
+            bypass_gate: When True, skip the ingest gate even if it is
+                         configured. Use when the caller is certain the
+                         content matters (e.g. an explicit "remember this").
         """
         conversation_id = conversation_id or _new_id()
+
+        # Ingest gate: short-circuit on clearly content-free turns. Verbatim
+        # storage still happens by default so FTS5 keyword search can recover
+        # the text even when extraction was skipped.
+        if self._gate is not None and not bypass_gate:
+            decision = self._gate.evaluate(text)
+            if not decision.ingest:
+                gated_chunk_id = ""
+                if self.config.ingest.gate_store_verbatim_on_skip:
+                    gated_chunk_id = self.verbatim.store(
+                        text=text,
+                        conversation_id=conversation_id,
+                        turn_number=turn_number,
+                        source_type=source_type,
+                        timestamp=timestamp,
+                    )
+                return IngestResult(
+                    entities_created=[],
+                    entities_resolved=[],
+                    relationships_created=0,
+                    conflicts_detected=0,
+                    verbatim_chunk_id=gated_chunk_id,
+                    gated_out=True,
+                    gate_reason=decision.reason,
+                )
+
         source_ref = SourceRef(
             conversation_id=conversation_id,
             turn_number=turn_number,

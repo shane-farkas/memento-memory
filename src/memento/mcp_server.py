@@ -34,18 +34,28 @@ def _get_store():
 
 
 @mcp.tool()
-def memory_ingest(text: str, source_type: str = "conversation") -> str:
+def memory_ingest(
+    text: str,
+    source_type: str = "conversation",
+    bypass_gate: bool = False,
+) -> str:
     """Store text in memory. Extracts entities, resolves them against the knowledge graph, detects contradictions, and stores the raw text for later recall.
 
     Args:
         text: The text to remember (conversation turn, note, fact, etc.)
         source_type: Type of source ("conversation", "note", "document")
+        bypass_gate: When True, skip the ingest gate and force the full
+            extraction pipeline. Set this when the caller is certain the
+            content is worth remembering (e.g. an explicit "remember that...").
 
     Returns:
         Summary of what was ingested.
     """
     store = _get_store()
-    result = store.ingest(text, source_type=source_type)
+    result = store.ingest(text, source_type=source_type, bypass_gate=bypass_gate)
+
+    if result.gated_out:
+        return f"Skipped extraction (gate: {result.gate_reason}). Stored verbatim only."
 
     parts = [f"Stored text ({len(text)} chars)"]
     if result.entities_created:
