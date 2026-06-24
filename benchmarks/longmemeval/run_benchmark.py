@@ -1179,6 +1179,18 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Best-effort: load API keys from the encrypted secret store into the
+    # environment (existing env vars win). Lets `run` find ANTHROPIC/GOOGLE for
+    # extraction and `evaluate` find OPENAI for the judge without manual export.
+    try:
+        from memento.secret_store import load_into_env
+
+        exported = load_into_env()
+        if exported:
+            logger.info("Loaded API keys from secret store: %s", ", ".join(exported))
+    except Exception as e:  # never let secret loading break the CLI
+        logger.debug("Secret store not loaded: %s", e)
+
     if args.command == "download":
         print("Downloading LongMemEval datasets ...")
         download_datasets(args.variants)
