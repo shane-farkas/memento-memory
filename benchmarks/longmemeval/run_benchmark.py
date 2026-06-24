@@ -408,7 +408,14 @@ If the answer needs correction, provide the corrected answer directly \
 # Answer-generation toggles, set from CLI flags in run_benchmark(). Kept at
 # module scope so the two answer call sites (_process_one_question and
 # _answer_questions) pick them up without threading flags through every helper.
-ANSWER_OPTS = {"two_pass_counting": True, "verify": True}
+#
+# Both default OFF. A 100-question oracle A/B showed verification regressed
+# overall accuracy 93.0% -> 81.0%: the verifier emits a critique ("The proposed
+# answer is reasonable, but...") rather than a clean replacement, which then
+# leaked into 23/100 final answers. Two-pass was likewise flagged regressive by
+# the original authors. They remain available as explicit opt-ins (--verify /
+# --two-pass) for experimentation.
+ANSWER_OPTS = {"two_pass_counting": False, "verify": False}
 
 
 def generate_answer(
@@ -509,9 +516,20 @@ def _verify_answer(
         max_tokens=1024,
     )
 
-    if verdict.strip().startswith("VERIFIED"):
+    v = verdict.strip()
+    if v.startswith("VERIFIED"):
         return answer
-    # The verifier produced a correction — use it
+    # Guard against critique-leak: if the verifier wrote *about* the answer
+    # ("The proposed answer is reasonable, but...") instead of producing a clean
+    # replacement, keep the original answer rather than emitting the critique.
+    critique_markers = (
+        "the proposed answer", "the answer is", "the assistant's answer",
+        "the answer correctly", "the answer references", "the answer claims",
+        "the answer misses", "the answer should", "this answer",
+    )
+    if v.lower().startswith(critique_markers):
+        return answer
+    # The verifier produced a clean corrected answer — use it
     return verdict
 
 
@@ -572,8 +590,8 @@ def run_benchmark(
     answer_api_key: str | None = None,
     workers: int = 1,
     session_workers: int = 1,
-    two_pass_counting: bool = True,
-    verify: bool = True,
+    two_pass_counting: bool = False,
+    verify: bool = False,
 ) -> None:
     """Run the full benchmark: ingest → recall → answer → save.
 
@@ -1151,14 +1169,14 @@ def main() -> None:
              "starting point.",
     )
     run.add_argument(
-        "--no-two-pass", action="store_true",
-        help="Disable enumerate-then-count two-pass answering for counting "
-             "questions (on by default).",
+        "--two-pass", action="store_true",
+        help="Opt in to enumerate-then-count two-pass answering for counting "
+             "questions (off by default; flagged regressive on oracle).",
     )
     run.add_argument(
-        "--no-verify", action="store_true",
-        help="Disable the self-verification pass over each answer "
-             "(on by default).",
+        "--verify", action="store_true",
+        help="Opt in to a self-verification pass over each answer (off by "
+             "default; regressed oracle accuracy 93%%->81%% in testing).",
     )
 
     # evaluate -----------------------------------------------------------
@@ -1211,8 +1229,8 @@ def main() -> None:
             answer_api_key=args.answer_api_key,
             workers=args.workers,
             session_workers=args.session_workers,
-            two_pass_counting=not args.no_two_pass,
-            verify=not args.no_verify,
+            two_pass_counting=args.two_pass,
+            verify=args.verify,
         )
 
     elif args.command == "evaluate":
