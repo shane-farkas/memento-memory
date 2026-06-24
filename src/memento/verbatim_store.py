@@ -219,8 +219,13 @@ class VerbatimStore:
 
     def _fts_search(self, query: str, top_k: int) -> list[VerbatimResult]:
         """Search by BM25 keyword matching."""
-        # Escape FTS5 special characters
-        safe_query = query.replace('"', '""')
+        # Build a tokenized OR query. Matching the entire question as a single
+        # quoted phrase (the old behavior) almost never hits, because a
+        # natural-language question rarely appears verbatim in a stored turn.
+        # OR-ing the content words restores real keyword recall.
+        match_expr = self._build_fts_query(query)
+        if not match_expr:
+            return []
 
         try:
             rows = self.db.fetchall(
@@ -230,7 +235,7 @@ class VerbatimStore:
                     WHERE verbatim_fts MATCH ?
                     ORDER BY rank
                     LIMIT ?""",
-                (f'"{safe_query}"', top_k),
+                (match_expr, top_k),
             )
         except Exception:
             # FTS query might fail on complex queries; fall back to empty
@@ -242,6 +247,37 @@ class VerbatimStore:
             score = 1.0 / (1.0 + abs(row["rank"]))
             results.append(self._row_to_result(row, score=score))
         return results
+
+    # Minimal stopword list — drops words that carry no keyword signal but
+    # would otherwise bloat the OR query and dilute BM25 scores.
+    _FTS_STOPWORDS = frozenset({
+        "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "for",
+        "is", "are", "was", "were", "be", "been", "do", "did", "does", "have",
+        "has", "had", "my", "me", "i", "you", "your", "it", "its", "that",
+        "this", "what", "when", "where", "which", "who", "how", "why", "with",
+        "about", "from", "as", "by", "so", "if", "then", "than", "into",
+    })
+
+    def _build_fts_query(self, query: str) -> str:
+        """Tokenize a natural-language query into an FTS5 OR expression.
+
+        Each term is wrapped as a single-token quoted phrase so FTS5 treats
+        punctuation/operators literally instead of as query syntax.
+        """
+        import re
+
+        tokens = re.findall(r"[A-Za-z0-9]+", query.lower())
+        terms = [t for t in tokens if len(t) > 2 and t not in self._FTS_STOPWORDS]
+        if not terms:
+            # Question was all stopwords/short tokens — fall back to any
+            # content-ish token so we still attempt keyword recall.
+            terms = [t for t in tokens if len(t) > 2]
+        if not terms:
+            return ""
+        # De-duplicate while preserving order.
+        seen: set[str] = set()
+        unique = [t for t in terms if not (t in seen or seen.add(t))]
+        return " OR ".join(f'"{t}"' for t in unique)
 
     def _fuse_results(
         self,

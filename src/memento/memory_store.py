@@ -25,6 +25,7 @@ from memento.models import (
     _now,
 )
 from memento.privacy import DeletionReceipt, EntityDataExport, BeliefChain, PrivacyLayer
+from memento.reranker import create_reranker
 from memento.retrieval import MemoryContext, RetrievalEngine
 from memento.scratchpad import SessionScratchpad
 from memento.verbatim_store import VerbatimStore
@@ -130,11 +131,16 @@ class MemoryStore:
             low_threshold=self.config.resolution.low_threshold,
         )
         self._conflict_detector = ConflictDetector(self.graph)
+        self._reranker = create_reranker(self.config.reranker)
         self._retrieval = RetrievalEngine(
             self.graph,
             verbatim=self.verbatim,
             default_token_budget=self.config.retrieval.default_token_budget,
             max_hop_depth=self.config.retrieval.max_hop_depth,
+            reranker=self._reranker,
+            recency_half_life_days=self.config.retrieval.recency_half_life_days,
+            semantic_entity_recall=self.config.retrieval.semantic_entity_recall,
+            semantic_entity_top_k=self.config.retrieval.semantic_entity_top_k,
         )
         self._consolidation = ConsolidationEngine(
             self.graph,

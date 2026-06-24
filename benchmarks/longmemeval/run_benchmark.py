@@ -405,6 +405,12 @@ If the answer needs correction, provide the corrected answer directly \
 (no preamble, just the better answer)."""
 
 
+# Answer-generation toggles, set from CLI flags in run_benchmark(). Kept at
+# module scope so the two answer call sites (_process_one_question and
+# _answer_questions) pick them up without threading flags through every helper.
+ANSWER_OPTS = {"two_pass_counting": True, "verify": True}
+
+
 def generate_answer(
     llm_client,
     model: str,
@@ -418,21 +424,33 @@ def generate_answer(
       Pass 1: enumerate all relevant items
       Pass 2: count and answer from the enumeration
 
-    All answers go through a self-verification pass that catches obvious
-    errors before returning.
+    All answers then go through a self-verification pass that catches obvious
+    errors before returning. Both passes are controlled by ANSWER_OPTS and can
+    be disabled with the --no-two-pass / --no-verify CLI flags.
     """
-    user_msg = ANSWER_PROMPT.format(
-        memory_context=memory_context,
-        current_date=current_date,
-        question=question,
-    )
-    return llm_client.complete(
-        messages=[{"role": "user", "content": user_msg}],
-        model=model,
-        system=ANSWER_SYSTEM,
-        temperature=0.0,
-        max_tokens=1024,
-    )
+    if ANSWER_OPTS["two_pass_counting"] and _is_counting_question(question):
+        answer = _two_pass_counting(
+            llm_client, model, memory_context, question, current_date
+        )
+    else:
+        user_msg = ANSWER_PROMPT.format(
+            memory_context=memory_context,
+            current_date=current_date,
+            question=question,
+        )
+        answer = llm_client.complete(
+            messages=[{"role": "user", "content": user_msg}],
+            model=model,
+            system=ANSWER_SYSTEM,
+            temperature=0.0,
+            max_tokens=1024,
+        )
+
+    if ANSWER_OPTS["verify"]:
+        answer = _verify_answer(
+            llm_client, model, memory_context, question, answer
+        )
+    return answer
 
 
 def _two_pass_counting(
@@ -554,6 +572,8 @@ def run_benchmark(
     answer_api_key: str | None = None,
     workers: int = 1,
     session_workers: int = 1,
+    two_pass_counting: bool = True,
+    verify: bool = True,
 ) -> None:
     """Run the full benchmark: ingest → recall → answer → save.
 
@@ -569,7 +589,12 @@ def run_benchmark(
         answer_provider: LLM provider for answer generation (separate from ingestion)
         answer_base_url: Base URL for answer generation (for OpenAI-compatible APIs)
         answer_api_key:  API key for answer generation provider
+        two_pass_counting: Enumerate-then-count for counting questions
+        verify:          Run a self-verification pass over each answer
     """
+    ANSWER_OPTS["two_pass_counting"] = two_pass_counting
+    ANSWER_OPTS["verify"] = verify
+
     dataset = load_dataset(variant)
     if category:
         dataset = [e for e in dataset if e.get("question_type") == category]
@@ -1125,6 +1150,16 @@ def main() -> None:
              "80-170 sessions and ingestion is LLM-bound. 10-20 is a good "
              "starting point.",
     )
+    run.add_argument(
+        "--no-two-pass", action="store_true",
+        help="Disable enumerate-then-count two-pass answering for counting "
+             "questions (on by default).",
+    )
+    run.add_argument(
+        "--no-verify", action="store_true",
+        help="Disable the self-verification pass over each answer "
+             "(on by default).",
+    )
 
     # evaluate -----------------------------------------------------------
     ev = sub.add_parser("evaluate", help="Evaluate results with GPT-4o judge")
@@ -1164,6 +1199,8 @@ def main() -> None:
             answer_api_key=args.answer_api_key,
             workers=args.workers,
             session_workers=args.session_workers,
+            two_pass_counting=not args.no_two_pass,
+            verify=not args.no_verify,
         )
 
     elif args.command == "evaluate":

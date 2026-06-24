@@ -70,6 +70,31 @@ class RetrievalConfig:
     default_token_budget: int = 2000
     max_hop_depth: int = 3
     recency_half_life_days: float = 30.0
+    # Semantic entity recall: seed graph expansion from entities that appear
+    # in semantically-retrieved verbatim chunks, not just literal name matches.
+    semantic_entity_recall: bool = True
+    semantic_entity_top_k: int = 8
+
+
+@dataclass
+class RerankerConfig:
+    """Configuration for the cross-encoder reranker.
+
+    When enabled, retrieval candidates (verbatim chunks and graph facts) are
+    rescored against the query with a cross-encoder. Falls back gracefully to
+    no reranking if the model cannot be loaded.
+    """
+
+    enabled: bool = True
+    provider: str = "auto"  # "auto", "cross-encoder", or "none"
+    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    def __post_init__(self) -> None:
+        env = os.environ.get("MEMENTO_RERANKER_ENABLED")
+        if env is not None:
+            self.enabled = env.strip().lower() not in ("0", "false", "no", "off")
+        self.provider = os.environ.get("MEMENTO_RERANKER_PROVIDER", self.provider)
+        self.model = os.environ.get("MEMENTO_RERANKER_MODEL", self.model)
 
 
 @dataclass
@@ -114,6 +139,7 @@ class MementoConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     resolution: ResolutionConfig = field(default_factory=ResolutionConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    reranker: RerankerConfig = field(default_factory=RerankerConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
 
