@@ -37,3 +37,5 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+# Preserved A/B run artifacts (not source)
+benchmarks/longmemeval/_ab_archive/

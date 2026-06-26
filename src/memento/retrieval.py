@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from memento.graph_store import GraphStore
 from memento.models import Entity, EntityType, PropertyValue, Relationship
+from memento.reranker import Reranker, sigmoid
 from memento.verbatim_store import VerbatimStore
 
 logger = logging.getLogger(__name__)
@@ -65,11 +66,19 @@ class RetrievalEngine:
         verbatim: VerbatimStore | None = None,
         default_token_budget: int = 2000,
         max_hop_depth: int = 3,
+        reranker: Reranker | None = None,
+        recency_half_life_days: float = 30.0,
+        semantic_entity_recall: bool = True,
+        semantic_entity_top_k: int = 8,
     ) -> None:
         self.graph = graph
         self.verbatim = verbatim
         self.default_token_budget = default_token_budget
         self.max_hop_depth = max_hop_depth
+        self.reranker = reranker
+        self.recency_half_life_days = recency_half_life_days
+        self.semantic_entity_recall = semantic_entity_recall
+        self.semantic_entity_top_k = semantic_entity_top_k
 
     def recall(
         self,
@@ -100,7 +109,7 @@ class RetrievalEngine:
             candidate_facts = self._temporal_filter(candidate_facts)
 
         # Step 4: Rank all candidate facts
-        ranked = self._rank_facts(candidate_facts, query_entities, query)
+        ranked = self._rank_facts(candidate_facts, query_entities, query, as_of)
 
         # Step 5: Context budgeting with coherence pass
         selected = self._budget_and_select(ranked, budget, query_entities)
@@ -109,6 +118,10 @@ class RetrievalEngine:
         verbatim_text = ""
         if self.verbatim:
             verbatim_results = self.verbatim.search(query, top_k=verbatim_top_k)
+            # Cross-encoder rerank: reorder chunks by joint query-document
+            # relevance so the strongest conversations are pulled first.
+            if verbatim_results and self.reranker:
+                verbatim_results = self._rerank_results(query, verbatim_results)
             if verbatim_results:
                 # Group by conversation and expand: if a single turn matched,
                 # pull in the full session so the LLM has surrounding context.
@@ -164,7 +177,57 @@ class RetrievalEngine:
                         entities.append(e)
                         seen_ids.add(e.id)
 
+        # Semantic recall: the query may not contain any entity *name* string
+        # (e.g. "where did I say I wanted to travel?"). Seed the graph from
+        # entities that appear in semantically-retrieved verbatim chunks so the
+        # graph is reachable beyond literal name overlap.
+        if self.semantic_entity_recall and self.verbatim:
+            for e in self._semantic_entity_recall(query, seen_ids):
+                entities.append(e)
+                seen_ids.add(e.id)
+
         return entities
+
+    def _semantic_entity_recall(
+        self, query: str, seen_ids: set[str]
+    ) -> list[Entity]:
+        """Find entities mentioned in the top semantically-similar chunks.
+
+        Bridges the dense-retrieval channel into the graph: we vector-search
+        the verbatim store, then match known entity names/aliases against the
+        retrieved text. This recovers the relevant subgraph for queries that
+        share no surface tokens with any entity name.
+        """
+        try:
+            chunks = self.verbatim._vector_search(query, self.semantic_entity_top_k)
+        except Exception:
+            return []
+        if not chunks:
+            return []
+
+        blob = "\n".join(c.text.lower() for c in chunks)
+        found: list[Entity] = []
+        for entity in self.graph.search_entities():
+            if entity.id in seen_ids:
+                continue
+            names = [entity.name, *(entity.aliases or [])]
+            if any(n and len(n) >= 3 and n.lower() in blob for n in names):
+                found.append(entity)
+                seen_ids.add(entity.id)
+        return found
+
+    def _rerank_results(self, query, results):
+        """Reorder verbatim results by cross-encoder relevance (descending)."""
+        docs = [r.text for r in results]
+        try:
+            scores = self.reranker.score(query, docs)
+        except Exception:
+            return results
+        if len(scores) != len(results):
+            return results
+        for r, s in zip(results, scores):
+            r.score = s
+        return sorted(results, key=lambda r: r.score, reverse=True)
 
     # ── Step 2: Subgraph Expansion ───────────────────────────────
 
@@ -268,23 +331,49 @@ class RetrievalEngine:
         facts: list[RetrievalFact],
         query_entities: list[Entity],
         query: str,
+        as_of: str | None = None,
     ) -> list[tuple[RetrievalFact, float]]:
-        """Score and rank facts using composite signals."""
-        query_entity_ids = {e.id for e in query_entities}
-        scored = []
+        """Score and rank facts using composite signals.
 
+        When a reranker is configured, each fact is also scored by the
+        cross-encoder against the query (batched, normalized to (0,1)) and that
+        signal is blended into the composite — putting graph facts and verbatim
+        chunks on a comparable relevance scale.
+        """
+        query_entity_ids = {e.id for e in query_entities}
+
+        rerank_scores: dict[int, float] = {}
+        if self.reranker and facts:
+            docs = [self._fact_doc(f) for f in facts]
+            try:
+                raw = self.reranker.score(query, docs)
+                if len(raw) == len(facts):
+                    rerank_scores = {id(f): sigmoid(s) for f, s in zip(facts, raw)}
+            except Exception:
+                rerank_scores = {}
+
+        scored = []
         for fact in facts:
-            score = self._score_fact(fact, query_entity_ids, query)
+            score = self._score_fact(
+                fact, query_entity_ids, query, as_of,
+                rerank=rerank_scores.get(id(fact)),
+            )
             scored.append((fact, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored
+
+    def _fact_doc(self, fact: RetrievalFact) -> str:
+        """Render a fact as a short document for the cross-encoder."""
+        return f"{fact.entity.name}: {fact.natural_language()}"
 
     def _score_fact(
         self,
         fact: RetrievalFact,
         query_entity_ids: set[str],
         query: str,
+        as_of: str | None = None,
+        rerank: float | None = None,
     ) -> float:
         """Composite ranking: relevance, recency, confidence, authority."""
         # Signal 1: Query relevance (is this about a query entity?)
@@ -295,8 +384,10 @@ class RetrievalEngine:
         else:
             query_relevance = 0.3
 
-        # Signal 2: Recency
-        recency = self._compute_recency(fact)
+        # Signal 2: Recency — measured relative to the query's as_of date, not
+        # wall-clock now, so it stays meaningful when reasoning over a past
+        # point in time (the entire LongMemEval setting).
+        recency = self._compute_recency(fact, as_of)
 
         # Signal 3: Confidence
         confidence = fact.confidence
@@ -304,24 +395,50 @@ class RetrievalEngine:
         # Signal 4: Source authority
         authority = fact.source_authority
 
-        # Composite: multiplicative gate + additive rank
+        # Composite: multiplicative gate + additive rank. When a cross-encoder
+        # relevance signal is available it replaces a chunk of the heuristic
+        # query-relevance/recency weight with a far sharper relevance estimate.
         gate = confidence * authority
-        rank = (
-            0.40 * query_relevance
-            + 0.30 * recency
-            + 0.30 * confidence
-        )
+        if rerank is not None:
+            rank = (
+                0.30 * query_relevance
+                + 0.20 * recency
+                + 0.20 * confidence
+                + 0.30 * rerank
+            )
+        else:
+            rank = (
+                0.40 * query_relevance
+                + 0.30 * recency
+                + 0.30 * confidence
+            )
         return gate * rank
 
-    def _compute_recency(self, fact: RetrievalFact) -> float:
-        """Compute recency score (exponential decay)."""
+    def _parse_ref_time(self, as_of: str | None) -> datetime:
+        """Reference time for recency decay: the as_of date, else now (UTC)."""
+        if as_of:
+            try:
+                dt = datetime.fromisoformat(as_of)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                pass
+        return datetime.now(timezone.utc)
+
+    def _compute_recency(
+        self, fact: RetrievalFact, as_of: str | None = None
+    ) -> float:
+        """Compute recency score (exponential decay) relative to as_of/now."""
         if not fact.recorded_at:
             return 0.5
         try:
             recorded = datetime.fromisoformat(fact.recorded_at)
-            now = datetime.now(timezone.utc)
-            days_since = max(0, (now - recorded).days)
-            return math.exp(-days_since / 30.0)
+            if recorded.tzinfo is None:
+                recorded = recorded.replace(tzinfo=timezone.utc)
+            ref = self._parse_ref_time(as_of)
+            days_since = max(0, (ref - recorded).days)
+            return math.exp(-days_since / self.recency_half_life_days)
         except Exception:
             return 0.5
 
