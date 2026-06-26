@@ -41,9 +41,14 @@ KNOWN_KEYS: dict[str, str] = {
     "google": "GOOGLE_API_KEY",
 }
 
-# App-specific DPAPI entropy. Not a secret — it only binds the ciphertext to
-# this application alongside the per-user key DPAPI already enforces.
-_ENTROPY = b"memento-secret-store-v1"
+# DPAPI entropy binds the ciphertext to this application alongside the per-user
+# key DPAPI already enforces. A per-install random value is generated on first
+# write and stored next to the encrypted blob — it is not itself a secret (the
+# real protection is the Windows account's DPAPI master key), but keeping it
+# out of source avoids a fixed value shared across every clone of the repo.
+# LEGACY_ENTROPY is the original fixed value, kept only so a store created
+# before per-install entropy can still be decrypted and migrated on next write.
+LEGACY_ENTROPY = b"memento-secret-store-v1"
 
 _SERVICE = "memento"  # keyring service name on non-Windows platforms
 
@@ -53,9 +58,35 @@ def _store_path() -> Path:
     return base.parent / "secrets.dat"
 
 
+def _entropy_path() -> Path:
+    return _store_path().parent / "secrets.entropy"
+
+
+def _read_entropy() -> bytes | None:
+    """The per-install entropy, or None if it hasn't been established yet."""
+    p = _entropy_path()
+    return p.read_bytes() if p.exists() else None
+
+
+def _ensure_entropy() -> bytes:
+    """Return the per-install entropy, generating + persisting it on first use."""
+    ent = _read_entropy()
+    if ent is not None:
+        return ent
+    ent = os.urandom(32)
+    p = _entropy_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(ent)
+    try:
+        os.chmod(p, 0o600)  # best-effort; DPAPI already gates the blob
+    except OSError:
+        pass
+    return ent
+
+
 # ── Windows DPAPI backend ───────────────────────────────────────────────────
 
-def _dpapi(encrypt: bool, data: bytes) -> bytes:
+def _dpapi(encrypt: bool, data: bytes, entropy: bytes) -> bytes:
     import ctypes
     from ctypes import wintypes
 
@@ -75,7 +106,7 @@ def _dpapi(encrypt: bool, data: bytes) -> bytes:
         return out.raw
 
     blob_in = to_blob(data)
-    blob_entropy = to_blob(_ENTROPY)
+    blob_entropy = to_blob(entropy)
     blob_out = DATA_BLOB()
     CRYPTPROTECT_UI_FORBIDDEN = 0x01
 
@@ -119,7 +150,11 @@ def _read_all() -> dict[str, str]:
         return {}
 
     if _is_windows():
-        plaintext = _dpapi(False, path.read_bytes())
+        # Per-install entropy if established, else the legacy fixed value so a
+        # store created before this change is still readable (it migrates to a
+        # per-install value on the next write).
+        entropy = _read_entropy() or LEGACY_ENTROPY
+        plaintext = _dpapi(False, path.read_bytes(), entropy)
         return json.loads(plaintext.decode("utf-8"))
 
     # Non-Windows: fall back to keyring (one entry per known name).
@@ -143,7 +178,11 @@ def _write_all(secrets: dict[str, str]) -> None:
     if _is_windows():
         path = _store_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        ciphertext = _dpapi(True, json.dumps(secrets).encode("utf-8"))
+        # Establish (or reuse) the per-install entropy and encrypt with it. A
+        # store previously written under LEGACY_ENTROPY is transparently
+        # re-encrypted here, since _read_all already decoded it.
+        entropy = _ensure_entropy()
+        ciphertext = _dpapi(True, json.dumps(secrets).encode("utf-8"), entropy)
         path.write_bytes(ciphertext)
         try:
             os.chmod(path, 0o600)  # best-effort; DPAPI already gates access
