@@ -66,6 +66,35 @@ The only thing that changes between the three runs is the recall step of how the
 
 The overall 10-point gap over both baselines isolates the value of structured, bitemporal memory. Vector and markdown approaches each win on specific categories, but neither covers the full space. Memento's worst category is still 86.5% - every approach to memory eventually fails somewhere, but structure keeps the floor high.
 
+### Retrieval ablation (`longmemeval-improvements`)
+
+A later round of work added five changes aimed at retrieval quality, A/B'd against the immediately-preceding commit. Each arm uses an identical sample (stratified, seed 42) and identical models per run; the baseline runs from an unmodified git worktree, so only the changed code differs.
+
+**The changes:**
+
+1. **Recency relative to `as_of`** — recency decay had been measured against wall-clock `now()`, which scored every fact ≈0 (the conversations are dated years in the past); it now decays relative to the question date. *Correctness fix.*
+2. **FTS keyword tokenization** — the verbatim keyword search matched the whole question as one quoted phrase (which almost never hits); it now ORs the content tokens. *Correctness fix.*
+3. **Cross-encoder reranker** — an optional local reranker over verbatim chunks, plus a query-relevance signal blended into graph-fact scoring.
+4. **Semantic entity recall** — seed graph expansion from entities that appear in semantically-retrieved chunks, so the graph is reachable for queries that share no surface tokens with any entity name.
+5. **Two-pass + self-verification answering** — **reverted to off by default** (see Finding 1).
+
+**Finding 1 — answer-side verification regressed accuracy.** Wiring the self-verification pass on by default dropped oracle accuracy from **93.0% → 81.0%** on a 100-question sample (Claude answers, GPT-4o judge). The verifier emits a critique ("The proposed answer is reasonable, but…") rather than a clean replacement, and that text leaked into 23/100 final answers. Both two-pass and verification are now **off by default** (opt-in `--two-pass` / `--verify`), with a guard that keeps the original answer if the verifier returns a critique. Retrieval-only (verification off) scored **90.0%** — within noise of the 93.0% baseline.
+
+**Finding 2 — oracle can't measure retrieval changes; the `s` variant can.** Oracle haystacks are evidence-only, so better retrieval has nothing to filter and can only break even (hence the ≈neutral −3 above). On the noisy `s` variant — where there are distractor sessions to cut through — the changes help:
+
+| Run (`s` variant, open models via Together) | Baseline | New | Δ |
+|---|--:|--:|--:|
+| 30-question stratified sample (Qwen3-235B) | 73.3% | 80.0% | +6.7 |
+| 264 common questions, partial 500-run (Llama-3.3-70B) | 56.4% | 65.2% | **+8.8** |
+
+On the 264-question partial the new arm gained 49 questions and lost 26 (net **+23**; McNemar χ²≈6.4, **p≈0.01**), with gains concentrated in the categories these changes target — multi-session (+9 net) and temporal-reasoning (+3 net).
+
+Two caveats on these numbers: (a) they were produced on **open models via Together** (extraction + answers on Qwen3-235B / Llama-3.3-70B; judge still GPT-4o), so the absolute scores are *not* comparable to the Claude-based 90.8% table above — only the within-row baseline-vs-new delta is; (b) the 264-question partial over-represents the harder categories, because the 500-run processes the dataset in order and was stopped early to save credits, which is why the absolute numbers are lower than the balanced 30-sample.
+
+**Takeaway:** the retrieval changes (recency, FTS, reranker, semantic recall) are neutral where there's no noise and a significant ~+9 points where there is; the recency and FTS pieces are correctness fixes regardless. The answer-side verification idea was a net negative and is disabled by default.
+
+> **Harness note:** `--session-workers > 1` (concurrent session ingestion *within* a single question) corrupts ingestion — multiple threads write to one question's SQLite connection (`sqlite3.InterfaceError: bad parameter`). Use cross-question `--workers` instead; each question gets its own store and connection.
+
 ### Question Categories
 
 The 500 questions span six categories of increasing difficulty:
@@ -116,8 +145,8 @@ The benchmark uses an in-memory SQLite database with these settings:
 
 - **Model:** Configurable via `--answer-model` (defaults to provider's default chat model)
 - **Temperature:** 0.0
-- **Two-pass counting:** Questions detected as counting/enumeration ("how many X") use a two-pass approach — first enumerate all items, then count from the enumeration
-- **Self-verification:** Not currently active in the main path since it didn't seem to improve the overall accuracy (available but not invoked by default)
+- **Two-pass counting** (`--two-pass`, off by default): counting/enumeration questions ("how many X") can use a two-pass approach — enumerate all items, then count from the enumeration. Off by default; see the retrieval-ablation findings above.
+- **Self-verification** (`--verify`, off by default): an optional pass that re-checks each answer against the evidence. Off by default — it was found to *regress* accuracy (the verifier emits a critique rather than a clean answer, which leaks into the output). A guard keeps the original answer if the verifier returns a critique.
 
 ### Reproduction
 
