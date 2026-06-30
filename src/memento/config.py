@@ -13,20 +13,30 @@ def _default_db_path() -> Path:
 
 @dataclass
 class EmbeddingConfig:
-    """Configuration for the embedding model."""
+    """Configuration for the embedding model.
+
+    `dimension` controls storage size AND, when set, is sent to the API as
+    the `dimensions` (OpenAI) or `output_dimensionality` (Gemini) request
+    param. Set `dimension=None` (default if MEMENTO_EMBEDDING_DIMENSION is
+    not set) to use the API's native embedding size — required for providers
+    like Together and OpenRouter that don't accept a dimensions param.
+    """
 
     provider: str = "auto"  # "auto", "sentence-transformers", or "openai"
     model: str = "all-MiniLM-L6-v2"
-    dimension: int = 384
+    dimension: int | None = None
     openai_api_key: str | None = None
 
     def __post_init__(self) -> None:
-        self.provider = os.environ.get("MEMENTO_EMBEDDING_PROVIDER", self.provider)
-        self.model = os.environ.get("MEMENTO_EMBEDDING_MODEL", self.model)
+        # Use `or default` (not get(key, default)) so unset env vars don't
+        # silently overwrite dataclass defaults with None.
+        self.provider = os.environ.get("MEMENTO_EMBEDDING_PROVIDER") or self.provider
+        self.model = os.environ.get("MEMENTO_EMBEDDING_MODEL") or self.model
         dim = os.environ.get("MEMENTO_EMBEDDING_DIMENSION")
-        if dim:
+        # Only override if explicitly set; preserve dataclass default otherwise
+        if dim is not None:
             self.dimension = int(dim)
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY", self.openai_api_key)
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY") or self.openai_api_key
 
 
 @dataclass
@@ -41,18 +51,19 @@ class LLMConfig:
     chat_model: str = ""
 
     def __post_init__(self) -> None:
-        self.provider = os.environ.get("MEMENTO_LLM_PROVIDER", self.provider)
-        self.api_key = os.environ.get("MEMENTO_LLM_API_KEY", self.api_key)
-        self.base_url = os.environ.get("MEMENTO_LLM_BASE_URL", self.base_url)
-        self.extraction_model = os.environ.get(
-            "MEMENTO_EXTRACTION_MODEL", self.extraction_model
+        # Use `or default` (not get(key, default)) so unset env vars don't
+        # silently overwrite dataclass defaults with None. Empty string is
+        # also preserved as the dataclass default (falsy but not None).
+        self.provider = os.environ.get("MEMENTO_LLM_PROVIDER") or self.provider
+        self.api_key = os.environ.get("MEMENTO_LLM_API_KEY") or self.api_key
+        self.base_url = os.environ.get("MEMENTO_LLM_BASE_URL") or self.base_url
+        self.extraction_model = (
+            os.environ.get("MEMENTO_EXTRACTION_MODEL") or self.extraction_model
         )
-        self.tiebreaker_model = os.environ.get(
-            "MEMENTO_TIEBREAKER_MODEL", self.tiebreaker_model
+        self.tiebreaker_model = (
+            os.environ.get("MEMENTO_TIEBREAKER_MODEL") or self.tiebreaker_model
         )
-        self.chat_model = os.environ.get(
-            "MEMENTO_CHAT_MODEL", self.chat_model
-        )
+        self.chat_model = os.environ.get("MEMENTO_CHAT_MODEL") or self.chat_model
 
 
 @dataclass
@@ -93,8 +104,10 @@ class RerankerConfig:
         env = os.environ.get("MEMENTO_RERANKER_ENABLED")
         if env is not None:
             self.enabled = env.strip().lower() not in ("0", "false", "no", "off")
-        self.provider = os.environ.get("MEMENTO_RERANKER_PROVIDER", self.provider)
-        self.model = os.environ.get("MEMENTO_RERANKER_MODEL", self.model)
+        # Use `or default` (not get(key, default)) so unset env vars don't
+        # silently overwrite dataclass defaults with None.
+        self.provider = os.environ.get("MEMENTO_RERANKER_PROVIDER") or self.provider
+        self.model = os.environ.get("MEMENTO_RERANKER_MODEL") or self.model
 
 
 @dataclass

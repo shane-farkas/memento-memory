@@ -1,8 +1,10 @@
 """Stage 0 tests: project skeleton, config, DB connection, embedder protocol."""
 
+import os
 import sqlite3
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from memento import __version__
 from memento.config import EmbeddingConfig, LLMConfig, MementoConfig
@@ -19,14 +21,28 @@ def test_import_all_modules():
     import memento.embedder
 
 
+def _clean_memento_env():
+    """Strip all MEMENTO_* env vars so default-config tests are deterministic."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("MEMENTO_")
+    }
+
+
 def test_default_config():
-    config = MementoConfig()
-    assert config.embedding.dimension == 384
-    assert config.embedding.provider == "auto"
-    assert config.llm.extraction_model == ""  # Auto-set from provider at runtime
-    assert config.resolution.high_threshold == 0.85
-    assert config.resolution.low_threshold == 0.40
-    assert config.retrieval.default_token_budget == 2000
+    with patch.dict(os.environ, _clean_memento_env(), clear=True):
+        config = MementoConfig()
+        # dimension defaults to None so providers can use the API's native
+        # embedding size (Together, OpenRouter, etc. reject the `dimensions`
+        # request param). The old hardcoded 384 default was incompatible with
+        # non-OpenAI embedding providers.
+        assert config.embedding.dimension is None
+        assert config.embedding.provider == "auto"
+        assert config.llm.extraction_model == ""  # Auto-set from provider at runtime
+        assert config.resolution.high_threshold == 0.85
+        assert config.resolution.low_threshold == 0.40
+        assert config.retrieval.default_token_budget == 2000
 
 
 def test_sqlite_wal_mode(db):
@@ -80,10 +96,13 @@ def test_sqlite_wal_mode_file_based(tmp_path):
 
 
 def test_embedding_config_defaults():
-    config = EmbeddingConfig()
-    assert config.dimension == 384
-    assert config.model == "all-MiniLM-L6-v2"
-    assert config.provider == "auto"
+    with patch.dict(os.environ, _clean_memento_env(), clear=True):
+        config = EmbeddingConfig()
+        # dimension defaults to None so providers can use the API's native
+        # embedding size — see test_default_config() for rationale.
+        assert config.dimension is None
+        assert config.model == "all-MiniLM-L6-v2"
+        assert config.provider == "auto"
 
 
 def test_embedder_protocol():
