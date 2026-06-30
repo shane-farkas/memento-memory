@@ -60,6 +60,7 @@ Any MCP-compatible client works with Memento. Add the config block above to:
 | **Cline** | MCP server settings |
 | **Windsurf** | MCP server settings |
 | **OpenClaw** | See [OpenClaw setup](#openclaw) below |
+| **Hermes** | See [Hermes setup](#hermes) below |
 | **Codex CLI** | `.codex/config.yaml` MCP servers |
 | **Gemini CLI** | `gemini mcp add memento -- memento-mcp` |
 | **OpenCode** | `.opencode/config.json` MCP servers |
@@ -76,6 +77,35 @@ openclaw gateway restart
 ```
 
 Make sure `ANTHROPIC_API_KEY` (or your chosen provider's key) is available to the OpenClaw process. For a systemd install, add it to `/etc/openclaw/env` and run `sudo systemctl restart openclaw`. For a user-level install, export it in the shell where you run `openclaw`.
+
+### Hermes
+
+[Hermes](https://github.com/NousResearch/hermes-agent) (NousResearch) is a standalone agent host that speaks MCP, so it connects to Memento exactly like any other client — no Memento-side changes needed. Add Memento as a stdio MCP server:
+
+```bash
+pip install "memento-memory[anthropic]"  # or [openai] / [gemini]
+hermes mcp add memento --command memento-mcp
+```
+
+Or add it directly under `mcp_servers:` in `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  memento:
+    command: "memento-mcp"
+    env:
+      ANTHROPIC_API_KEY: "your-key"   # or your chosen provider's key
+```
+
+Make sure `ANTHROPIC_API_KEY` (or your provider's key) is available to the Hermes process — set it in the `env:` block above, or export it in the shell where you launch Hermes. After editing the config, run `/reload-mcp` and ask Hermes what tools it has; you should see `memory_ingest` and `memory_recall`. To keep the tool surface minimal, restrict it to just those:
+
+```yaml
+mcp_servers:
+  memento:
+    command: "memento-mcp"
+    tools:
+      include: [memory_ingest, memory_recall]
+```
 
 ### Python API
 
