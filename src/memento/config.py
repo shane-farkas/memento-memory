@@ -80,7 +80,10 @@ class RetrievalConfig:
 
     default_token_budget: int = 2000
     max_hop_depth: int = 3
-    recency_half_life_days: float = 30.0
+    # 1/e decay time constant for the recency signal (NOT a half-life):
+    # the score is exp(-days / recency_decay_days), so at days == this value
+    # the score is ~0.37, not 0.5.
+    recency_decay_days: float = 30.0
     # Semantic entity recall: seed graph expansion from entities that appear
     # in semantically-retrieved verbatim chunks, not just literal name matches.
     semantic_entity_recall: bool = True
@@ -141,6 +144,22 @@ class IngestConfig:
     gate_enabled: bool = False
     gate_min_chars: int = 20
     gate_store_verbatim_on_skip: bool = True
+
+    def __post_init__(self) -> None:
+        env = os.environ.get("MEMENTO_INGEST_GATE_ENABLED")
+        if env is not None:
+            self.gate_enabled = env.strip().lower() not in ("0", "false", "no", "off")
+        min_chars = os.environ.get("MEMENTO_INGEST_GATE_MIN_CHARS")
+        if min_chars:
+            try:
+                self.gate_min_chars = int(min_chars)
+            except ValueError:
+                pass
+        store_verbatim = os.environ.get("MEMENTO_INGEST_GATE_STORE_VERBATIM_ON_SKIP")
+        if store_verbatim is not None:
+            self.gate_store_verbatim_on_skip = (
+                store_verbatim.strip().lower() not in ("0", "false", "no", "off")
+            )
 
 
 @dataclass

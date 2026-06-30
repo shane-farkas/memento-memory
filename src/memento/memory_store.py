@@ -138,7 +138,7 @@ class MemoryStore:
             default_token_budget=self.config.retrieval.default_token_budget,
             max_hop_depth=self.config.retrieval.max_hop_depth,
             reranker=self._reranker,
-            recency_half_life_days=self.config.retrieval.recency_half_life_days,
+            recency_decay_days=self.config.retrieval.recency_decay_days,
             semantic_entity_recall=self.config.retrieval.semantic_entity_recall,
             semantic_entity_top_k=self.config.retrieval.semantic_entity_top_k,
         )

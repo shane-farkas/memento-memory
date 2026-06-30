@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Protocol
 
 from memento.config import RerankerConfig
@@ -38,19 +39,25 @@ def sigmoid(x: float) -> float:
 # Cross-encoder weights are expensive to load, so cache one instance per model
 # name for the lifetime of the process. The benchmark builds a fresh
 # MemoryStore per question (and may run many in parallel); without this cache
-# every store would reload the model.
+# every store would reload the model. The lock guards the load path so parallel
+# workers don't all miss the cache at once and load N copies simultaneously.
 _MODEL_CACHE: dict[str, object] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 class CrossEncoderReranker:
     """Reranker backed by a sentence-transformers CrossEncoder (local, no API)."""
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> None:
+        # Double-checked locking: the fast path skips the lock once the model is
+        # cached; the slow path serializes the one-time load across threads.
         if model_name not in _MODEL_CACHE:
-            from sentence_transformers import CrossEncoder
+            with _MODEL_CACHE_LOCK:
+                if model_name not in _MODEL_CACHE:
+                    from sentence_transformers import CrossEncoder
 
-            logger.info("Loading cross-encoder reranker: %s", model_name)
-            _MODEL_CACHE[model_name] = CrossEncoder(model_name)
+                    logger.info("Loading cross-encoder reranker: %s", model_name)
+                    _MODEL_CACHE[model_name] = CrossEncoder(model_name)
         self._model = _MODEL_CACHE[model_name]
 
     def score(self, query: str, documents: list[str]) -> list[float]:

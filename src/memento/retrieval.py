@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -67,7 +68,7 @@ class RetrievalEngine:
         default_token_budget: int = 2000,
         max_hop_depth: int = 3,
         reranker: Reranker | None = None,
-        recency_half_life_days: float = 30.0,
+        recency_decay_days: float = 30.0,
         semantic_entity_recall: bool = True,
         semantic_entity_top_k: int = 8,
     ) -> None:
@@ -76,7 +77,7 @@ class RetrievalEngine:
         self.default_token_budget = default_token_budget
         self.max_hop_depth = max_hop_depth
         self.reranker = reranker
-        self.recency_half_life_days = recency_half_life_days
+        self.recency_decay_days = recency_decay_days
         self.semantic_entity_recall = semantic_entity_recall
         self.semantic_entity_top_k = semantic_entity_top_k
 
@@ -206,15 +207,40 @@ class RetrievalEngine:
             return []
 
         blob = "\n".join(c.text.lower() for c in chunks)
+        # Token set for a cheap reject before the (more expensive) whole-word
+        # phrase check — avoids running a regex over the blob for every entity.
+        blob_words = set(re.findall(r"[a-z0-9]+", blob))
+
         found: list[Entity] = []
         for entity in self.graph.search_entities():
             if entity.id in seen_ids:
                 continue
             names = [entity.name, *(entity.aliases or [])]
-            if any(n and len(n) >= 3 and n.lower() in blob for n in names):
+            if any(self._name_in_blob(n, blob, blob_words) for n in names):
                 found.append(entity)
                 seen_ids.add(entity.id)
+                # Bound the scan: stop once we've recalled enough fresh entities
+                # so a large graph can't turn every recall into a full scan.
+                if len(found) >= self.semantic_entity_top_k:
+                    break
         return found
+
+    @staticmethod
+    def _name_in_blob(name: str | None, blob: str, blob_words: set[str]) -> bool:
+        """True if *name* occurs in *blob* as a whole word/phrase, not a substring.
+
+        Substring matching produced false positives ("Sam" inside "sample",
+        "Ana" inside "banana"). We require every token of the name to be present
+        (cheap set check) and then confirm the full name as a word-bounded
+        phrase, so multi-word names like "Alpha Corp" still match.
+        """
+        if not name or len(name) < 3:
+            return False
+        nl = name.lower()
+        name_words = re.findall(r"[a-z0-9]+", nl)
+        if not name_words or not all(w in blob_words for w in name_words):
+            return False
+        return re.search(r"\b" + re.escape(nl) + r"\b", blob) is not None
 
     def _rerank_results(self, query, results):
         """Reorder verbatim results by cross-encoder relevance (descending)."""
@@ -342,21 +368,23 @@ class RetrievalEngine:
         """
         query_entity_ids = {e.id for e in query_entities}
 
+        # Keyed by list index, not id(fact): object identity is fragile (an id
+        # can be reused once a fact is GC'd) and index keying is just as cheap.
         rerank_scores: dict[int, float] = {}
         if self.reranker and facts:
             docs = [self._fact_doc(f) for f in facts]
             try:
                 raw = self.reranker.score(query, docs)
                 if len(raw) == len(facts):
-                    rerank_scores = {id(f): sigmoid(s) for f, s in zip(facts, raw)}
+                    rerank_scores = {i: sigmoid(s) for i, s in enumerate(raw)}
             except Exception:
                 rerank_scores = {}
 
         scored = []
-        for fact in facts:
+        for i, fact in enumerate(facts):
             score = self._score_fact(
                 fact, query_entity_ids, query, as_of,
-                rerank=rerank_scores.get(id(fact)),
+                rerank=rerank_scores.get(i),
             )
             scored.append((fact, score))
 
@@ -438,7 +466,7 @@ class RetrievalEngine:
                 recorded = recorded.replace(tzinfo=timezone.utc)
             ref = self._parse_ref_time(as_of)
             days_since = max(0, (ref - recorded).days)
-            return math.exp(-days_since / self.recency_half_life_days)
+            return math.exp(-days_since / self.recency_decay_days)
         except Exception:
             return 0.5
 
