@@ -9,7 +9,7 @@ Memento is a bitemporal knowledge graph, tracking when facts were true vs. when 
 
 Most AI memory systems use folders of text files or dump text into a vector store and retrieve by similarity. Memento builds a knowledge graph that resolves entities, detects contradictions, tracks time, and composes answers from structured relationships rather than raw chunks.
 
-Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Codex, Cline, Windsurf, OpenClaw) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
+Works with any MCP-compatible client (Claude Desktop, Cursor, Claude Code, Codex, Cline, Windsurf, Hermes, OpenClaw) and any LLM backend (Claude, GPT, Gemini, Llama, Mistral, Ollama, or any OpenAI-compatible endpoint).
 
 **90.8% overall accuracy, 92.2% task average on [LongMemEval](BENCHMARKS.md)** (500 questions, end-to-end, GPT-4o judge), a benchmark for long-term conversational memory covering temporal reasoning, knowledge updates, multi-session recall, and preference tracking.
 
