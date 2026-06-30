@@ -29,16 +29,12 @@ from memento.secret_store import get_secret  # noqa: E402
 
 # Models to test via Together AI
 MODELS = [
-    ("meta-llama/Llama-3.3-70B-Instruct-Turbo", "llama33_70b"),
-    ("deepseek-ai/DeepSeek-V3.1", "deepseek_v3"),
-    ("google/gemma-4-31B-it", "gemma4_31b"),
-    ("Qwen/Qwen3-235B-A22B-Instruct-2507-tput", "qwen3_235b"),
-    ("MiniMaxAI/MiniMax-M2.7", "minimax_m27"),
-    ("moonshotai/Kimi-K2.5", "kimi_k2"),
+    ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
+    ("zai-org/GLM-5.2", "glm52"),
 ]
 
 # Use a sample for quick comparison (set to None for full 500)
-SAMPLE = 50
+SAMPLE = None
 
 
 def main():
@@ -84,6 +80,7 @@ def main():
             "--answer-provider", "openai-compatible",
             "--answer-base-url", "https://api.together.xyz/v1",
             "--answer-api-key", together_key,
+            "--workers", "8",
         ]
         if SAMPLE:
             cmd.extend(["--sample", str(SAMPLE)])
