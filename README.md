@@ -3,7 +3,7 @@
 ![PyPI - Version](https://img.shields.io/pypi/v/memento-memory?v=1)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/memento-memory?v=1)
 ![GitHub License](https://img.shields.io/github/license/shane-farkas/memento-memory)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/shane-farkas/memento-memory/test.yml?label=tests)
+
 
 Memento is a bitemporal knowledge graph, tracking when facts were true vs. when they were learned, which gives AI agents persistent, structured memory across LLM providers, clients, and conversations.
 
